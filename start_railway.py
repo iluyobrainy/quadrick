@@ -22,22 +22,28 @@ if __name__ == "__main__":
     print("="*60)
     print("\n🚀 Starting services...\n")
     
-    # Option 1: Run API server only (recommended for Railway)
-    # The bot will connect to API server via HTTP or Supabase
+    # Run both API server and trading bot
     print("🌐 Starting API Server...")
-    os.execvp("python", ["python", "api_server.py"])
+    api_process = subprocess.Popen([sys.executable, "api_server.py"])
     
-    # Option 2: If you want to run both in separate processes
-    # (Uncomment if needed, but Railway works better with one process)
-    # api_process = subprocess.Popen([sys.executable, "api_server.py"])
-    # bot_process = subprocess.Popen([sys.executable, "main.py"])
-    # 
-    # try:
-    #     api_process.wait()
-    #     bot_process.wait()
-    # except KeyboardInterrupt:
-    #     api_process.terminate()
-    #     bot_process.terminate()
-    #     api_process.wait()
-    #     bot_process.wait()
+    print("🤖 Starting Trading Bot...")
+    bot_process = subprocess.Popen([sys.executable, "main.py"])
+    
+    try:
+        # Wait for both processes
+        while True:
+            if api_process.poll() is not None:
+                print("❌ API Server stopped unexpectedly!")
+                break
+            if bot_process.poll() is not None:
+                print("❌ Trading Bot stopped unexpectedly!")
+                break
+            time.sleep(5)
+    except KeyboardInterrupt:
+        print("\n🛑 Interrupt received, shutting down...")
+    finally:
+        api_process.terminate()
+        bot_process.terminate()
+        api_process.wait()
+        bot_process.wait()
 
