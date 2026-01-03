@@ -115,16 +115,21 @@ class BybitClient:
         self.api_secret = api_secret
         self.testnet = testnet
         
-        # Configure target domain (default to bytick for mainnet to avoid blocks)
-        target_domain = "api.bytick.com" if not testnet else "api-testnet.bybit.com"
+        # API Configuration
+        self.BYBIT_API_URL = os.getenv("BYBIT_BASE_URL_MAINNET", "https://api.bybit.com")
+        self.BYBIT_TESTNET_API_URL = os.getenv("BYBIT_BASE_URL_TESTNET", "https://api-testnet.bybit.com")
         
-        # Override if specified in env
-        env_domain = os.getenv("BYBIT_BASE_URL_MAINNET" if not testnet else "BYBIT_BASE_URL_TESTNET")
-        if env_domain:
-             target_domain = env_domain.replace("https://", "").replace("http://", "")
-        
-        self.domain = target_domain
-        
+        # WebSocket Configuration
+        self.BYBIT_WS_URL = os.getenv("BYBIT_WS_URL_MAINNET", "wss://stream.bybit.com/v5/public")
+        self.BYBIT_TESTNET_WS_URL = os.getenv("BYBIT_WS_URL_TESTNET", "wss://stream-testnet.bybit.com/v5/public")
+
+        # Determine the base domain for HTTP requests
+        # pybit expects just the domain stem (e.g., "bybit" or "bytick")
+        if self.testnet:
+            self.domain = self.BYBIT_TESTNET_API_URL.replace("https://", "").split("/")[0]
+        else:
+            self.domain = self.BYBIT_API_URL.replace("https://", "").split("/")[0]
+
         # Extract domain stem for pybit (e.g., "bytick" from "api.bytick.com")
         # pybit constructs URL as: https://{subdomain}.{domain}.{tld}
         if "bytick" in target_domain:

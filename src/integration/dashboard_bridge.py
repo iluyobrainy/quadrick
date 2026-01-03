@@ -16,23 +16,47 @@ class DashboardBridge:
     
     def __init__(self, enabled: bool = True):
         self.enabled = enabled
+        self.base_url = DASHBOARD_API_URL
+        self._connection_failed = False
         self._check_connection()
         
     def _check_connection(self):
-        """Check if dashboard is reachable"""
+        """Check if dashboard API is reachable (fail silently after first log)"""
         if not self.enabled:
-            return
+            return False # Return False if disabled, as no connection is made
+
+        if self._connection_failed:
+             return False
+
         try:
-            requests.get("http://localhost:8000/", timeout=1)
-            logger.info("✓ Connected to Dashboard API")
-        except:
-            logger.warning("⚠️ Dashboard API not reachable (is api_server.py running?)")
+            # Check the root URL for general connectivity, not the internal API endpoint
+            # The dashboard server runs on port 8000, the internal API on 8001
+            response = requests.get("http://localhost:8000/", timeout=0.5)
+            if response.status_code == 200:
+                if self._connection_failed: # If it failed before but now works
+                    logger.info("✓ Reconnected to Dashboard API")
+                    self._connection_failed = False
+                else: # First successful connection
+                    logger.info("✓ Connected to Dashboard API")
+                return True
+        except requests.exceptions.RequestException:
+            pass
+            
+        # Only log once to avoid spamming
+        if not self._connection_failed:
+             logger.warning("⚠️ Dashboard API not reachable (running in headless mode)")
+             self._connection_failed = True
+        return False
 
     def _send_async(self, endpoint: str, data: Dict[str, Any]):
         """Send request in a separate thread to avoid blocking main loop"""
         if not self.enabled:
             return
             
+        # Do not attempt to send if connection is known to be down
+        if self._connection_failed:
+            return
+
         def _send():
             try:
                 # Verbose logging for user confirmation
