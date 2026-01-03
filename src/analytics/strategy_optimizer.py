@@ -17,6 +17,23 @@ class StrategyOptimizer:
         self.parameter_suggestions = {}
         logger.info("Strategy optimizer initialized")
 
+    def get_stats(self) -> Dict[str, Any]:
+        """Return internal stats for persistence"""
+        return {
+            "strategy_performance": self.strategy_performance,
+            "market_regime_stats": self.market_regime_stats,
+            "parameter_suggestions": self.parameter_suggestions
+        }
+
+    def load_stats(self, stats: Dict[str, Any]):
+        """Load stats from persistence"""
+        if not stats:
+            return
+        self.strategy_performance = stats.get("strategy_performance", {})
+        self.market_regime_stats = stats.get("market_regime_stats", {})
+        self.parameter_suggestions = stats.get("parameter_suggestions", {})
+        logger.info("Strategy optimizer stats loaded from persistence")
+
     def analyze_strategy_performance(
         self,
         strategy_name: str,

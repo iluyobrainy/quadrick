@@ -242,9 +242,16 @@ class QuadrickTradingBot:
                 current_milestone, next_milestone = 0, 50  # Default milestones
                 logger.info(f"Using fallback balance: ${self.account_balance:.2f}")
                 logger.info(f"Fallback Milestone: ${current_milestone:.0f} → ${next_milestone:.0f}")
-            else:
-                logger.error(f"✗ Failed to connect to Bybit: {e}")
                 raise
+        
+        # Hydrate Strategy Optimizer from Supabase
+        if self.db:
+            try:
+                stats = await self.db.load_strategy_stats()
+                if stats:
+                    self.strategy_optimizer.load_stats(stats)
+            except Exception as e:
+                logger.warning(f"Failed to load strategy optimizer stats: {e}")
         
         # Test DeepSeek connection
         try:
@@ -1265,6 +1272,9 @@ class QuadrickTradingBot:
                                 "price_24h_change_pct": market_data["tickers"][decision.symbol].price_24h_change * 100
                             }
                             self.active_trade_contexts[decision.symbol] = context_snapshot
+                            # Save to Supabase for persistence across restarts
+                            if self.db:
+                                await self.db.save_active_context(decision.symbol, context_snapshot)
                 except Exception as e:
                     logger.warning(f"Failed to capture RAG context for {decision.symbol}: {e}")
             
@@ -1332,9 +1342,13 @@ class QuadrickTradingBot:
                 })
 
                 # Save Trade Memory (RAG)
-                if self.db and symbol in self.active_trade_contexts:
-                    try:
-                        entry_context = self.active_trade_contexts[symbol]
+                try:
+                    # Check local dict first, fallback to Supabase for trades opened before restart
+                    entry_context = self.active_trade_contexts.get(symbol)
+                    if not entry_context and self.db:
+                        entry_context = await self.db.get_active_context(symbol)
+                    
+                    if self.db and entry_context:
                         trade_result = {
                             "symbol": symbol,
                             "strategy": strategy_name,
@@ -1342,10 +1356,13 @@ class QuadrickTradingBot:
                             "win": won
                         }
                         await self.db.save_trade_memory(trade_result, entry_context)
-                        # Clean up
-                        del self.active_trade_contexts[symbol]
-                    except Exception as e:
-                        logger.warning(f"Failed to save trade memory for {symbol}: {e}")
+                        # Clean up both persistent and local storage
+                        await self.db.delete_active_context(symbol)
+                        if symbol in self.active_trade_contexts:
+                            del self.active_trade_contexts[symbol]
+                        logger.info(f"🧠 Memory saved for {symbol} (PnL: {pnl:+.2f}%)")
+                except Exception as e:
+                    logger.warning(f"Failed to save trade memory for {symbol}: {e}")
 
                 # Update strategy optimizer
                 market_regime = "neutral"  # Could be enhanced to detect actual regime
@@ -1358,6 +1375,14 @@ class QuadrickTradingBot:
                     leverage=10.0,  # Could be from position data
                     risk_pct=20.0   # Could be from position data
                 )
+                
+                # Persist learning to Supabase
+                if self.db:
+                    try:
+                        stats = self.strategy_optimizer.get_stats()
+                        await self.db.save_strategy_stats(stats)
+                    except Exception as e:
+                        logger.warning(f"Failed to save strategy stats: {e}")
 
             # Remove from position monitor
             self.position_monitor.remove_position(symbol)

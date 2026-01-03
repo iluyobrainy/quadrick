@@ -47,6 +47,77 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"Failed to save decision to Supabase: {e}")
 
+    async def save_active_context(self, symbol: str, context: Dict[str, Any]):
+        """Persist trade entry context so it survives restarts"""
+        if not self.enabled or not self.client:
+            return
+        try:
+            data = {
+                "symbol": symbol,
+                "context": context,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            await asyncio.to_thread(
+                lambda: self.client.table("active_contexts").upsert(data, on_conflict="symbol").execute()
+            )
+        except Exception as e:
+            logger.error(f"Failed to save active context for {symbol}: {e}")
+
+    async def get_active_context(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Retrieve entry context for a trade opened before restart"""
+        if not self.enabled or not self.client:
+            return None
+        try:
+            response = await asyncio.to_thread(
+                lambda: self.client.table("active_contexts").select("context").eq("symbol", symbol).execute()
+            )
+            if response.data:
+                return response.data[0].get("context")
+        except Exception as e:
+            logger.error(f"Failed to get active context for {symbol}: {e}")
+        return None
+
+    async def delete_active_context(self, symbol: str):
+        """Clear context after trade is closed and saved to memory"""
+        if not self.enabled or not self.client:
+            return
+        try:
+            await asyncio.to_thread(
+                lambda: self.client.table("active_contexts").delete().eq("symbol", symbol).execute()
+            )
+        except Exception as e:
+            logger.error(f"Failed to delete active context for {symbol}: {e}")
+
+    async def save_strategy_stats(self, stats: Dict[str, Any]):
+        """Save strategy optimizer learning data"""
+        if not self.enabled or not self.client:
+            return
+        try:
+            payload = {
+                "id": "global_stats", # Single record for optimization data
+                "data": stats,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            await asyncio.to_thread(
+                lambda: self.client.table("strategy_learning").upsert(payload, on_conflict="id").execute()
+            )
+        except Exception as e:
+            logger.error(f"Failed to save strategy stats: {e}")
+
+    async def load_strategy_stats(self) -> Optional[Dict[str, Any]]:
+        """Load strategy optimizer learning data"""
+        if not self.enabled or not self.client:
+            return None
+        try:
+            response = await asyncio.to_thread(
+                lambda: self.client.table("strategy_learning").select("data").eq("id", "global_stats").execute()
+            )
+            if response.data:
+                return response.data[0].get("data")
+        except Exception as e:
+            logger.error(f"Failed to load strategy stats: {e}")
+        return None
+
     async def save_trade_memory(self, trade_result: Dict[str, Any], market_context: Dict[str, Any]):
         """
         Save a completed trade with its market context vector for future retrieval.

@@ -56,7 +56,16 @@ class TradingCouncil:
             try:
                 similar_trades = await self.db.find_similar_trades(symbol, market_data, limit=5)
                 if similar_trades:
-                    logger.info(f"📚 RAG: Found {len(similar_trades)} similar past trades")
+                    wins = sum(1 for t in similar_trades if t.get("win"))
+                    total = len(similar_trades)
+                    avg_pnl = sum(float(t.get("pnl_pct", 0)) for t in similar_trades) / total
+                    logger.info(f"📚 RAG: Found {total} similar setups from memory. History in this context: {wins}W/{total-wins}L (Avg PnL: {avg_pnl:+.2f}%)")
+                    
+                    # Log specific examples for transparency
+                    for i, t in enumerate(similar_trades[:2]):
+                        res = "WON" if t.get("win") else "LOST"
+                        logger.debug(f"   Memory #{i+1}: {t.get('symbol')} {res} ({t.get('pnl_pct'):+.1f}%) using {t.get('strategy')}")
+                
                 # Add to market_data for agents to use
                 market_data["similar_trades"] = similar_trades
             except Exception as e:
