@@ -10,7 +10,8 @@ from typing import Dict, Any, Optional, List
 from loguru import logger
 
 import os
-INTERNAL_PORT = os.getenv("PORT", "8001")
+# FORCE internal port to 8001 to match api_server.py and Railway manual networking
+INTERNAL_PORT = "8001"
 DASHBOARD_API_URL = f"http://localhost:{INTERNAL_PORT}/internal"
 
 class DashboardBridge:
@@ -23,30 +24,23 @@ class DashboardBridge:
         self._check_connection()
         
     def _check_connection(self):
-        """Check if dashboard API is reachable (fail silently after first log)"""
+        """Check if dashboard API is reachable"""
         if not self.enabled:
-            return False # Return False if disabled, as no connection is made
-
-        if self._connection_failed:
-             return False
+            return False
 
         try:
-            # Check the root URL for general connectivity, not the internal API endpoint
-            # The dashboard server runs on port 8000, the internal API on 8001
-            response = requests.get("http://localhost:8000/", timeout=0.5)
+            # Check the actual API port (8001) and the root health endpoint
+            response = requests.get(f"http://localhost:{INTERNAL_PORT}/", timeout=1.0)
             if response.status_code == 200:
-                if self._connection_failed: # If it failed before but now works
-                    logger.info("✓ Reconnected to Dashboard API")
+                if self._connection_failed:
+                    logger.info("✓ Dashboard API connectivity restored")
                     self._connection_failed = False
-                else: # First successful connection
-                    logger.info("✓ Connected to Dashboard API")
                 return True
-        except requests.exceptions.RequestException:
+        except:
             pass
             
-        # Only log once to avoid spamming
         if not self._connection_failed:
-             logger.warning("⚠️ Dashboard API not reachable (running in headless mode)")
+             logger.warning(f"⚠️ Dashboard API not reachable on port {INTERNAL_PORT} (running in headless mode)")
              self._connection_failed = True
         return False
 
@@ -54,10 +48,8 @@ class DashboardBridge:
         """Send request in a separate thread to avoid blocking main loop"""
         if not self.enabled:
             return
-            
-        # Do not attempt to send if connection is known to be down
-        if self._connection_failed:
-            return
+        
+        # We try to send even if failed, to allow for automatic recovery
 
         def _send():
             try:
@@ -87,11 +79,18 @@ class DashboardBridge:
                     print(f"DEBUG: \033[96mPush Decision -> Dashboard\033[0m ... ({decision_type} {symbol})")
 
                 response = requests.post(f"{DASHBOARD_API_URL}/{endpoint}", json=data, timeout=5.0)
-                if response.status_code != 200:
+                if response.status_code == 200:
+                    if self._connection_failed:
+                        logger.info("✓ Dashboard Bridge connectivity restored")
+                        self._connection_failed = False
+                else:
                     print(f"DEBUG: \033[91mDashboard Error ({endpoint})\033[0m: HTTP {response.status_code}")
             except Exception as e:
+                # Silently mark as failed if it wasn't already
+                self._connection_failed = True
                 # Print connection errors to help user debug
-                print(f"DEBUG: \033[91mDashboard Connection Failed ({endpoint})\033[0m: {str(e)[:100]}")
+                if endpoint != "log": # Don't print for every log line
+                    print(f"DEBUG: \033[91mDashboard Connection Failed ({endpoint})\033[0m: {str(e)[:100]}")
                 
         threading.Thread(target=_send, daemon=True).start()
 

@@ -58,6 +58,16 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Background task for heartbeat logs
+async def heartbeat_task():
+    while True:
+        logger.info("💓 Dashboard API Heartbeat - Connection Healthy")
+        await asyncio.sleep(30)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(heartbeat_task())
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -86,7 +96,6 @@ bot_state = {
         "available": 0.0,
         "unrealized_pnl": 0.0,
         "daily_pnl": 0.0,
-        "daily_pnl_pct": 0.0,
         "daily_pnl_pct": 0.0,
     },
     "positions": [],
