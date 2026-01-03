@@ -388,8 +388,15 @@ class QuadrickTradingBot:
                 
                 all_decisions = []
                 
-                # Iterate through watchlist to find opportunities
-                for symbol in self.watchlist:
+                # Rank watchlist by current 15m relative volume to find "alive" coins first
+                ranked_watchlist = sorted(
+                    self.watchlist,
+                    key=lambda s: analysis.get(s, {}).get("timeframe_analysis", {}).get("15m", {}).get("volume_ratio", 0),
+                    reverse=True
+                )
+                
+                # Iterate through ranked watchlist to find opportunities
+                for symbol in ranked_watchlist:
                     if symbol not in analysis:
                         continue
                         

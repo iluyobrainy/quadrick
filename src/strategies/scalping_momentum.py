@@ -124,22 +124,22 @@ class ScalpingMomentumStrategy(BaseStrategy):
             atr = primary_tf.get("atr", 0)
             
             if current_price > 0 and atr > 0:
-                # Scalping: Tight stop (1x ATR), Quick profit (1.5x ATR)
-                # Minimum 1.5:1 R:R
+                # Sniper Scalping: Ultra-tight (0.7x ATR), Rapid Profit (1.0x ATR)
+                # Targeting the immediate 'Impulse' move
                 if direction == "long":
-                    stop_loss = current_price - (1.0 * atr)
-                    take_profit = current_price + (1.5 * atr)
+                    stop_loss = current_price - (0.7 * atr)
+                    take_profit = current_price + (1.0 * atr)
                 else:  # short
-                    stop_loss = current_price + (1.0 * atr)
-                    take_profit = current_price - (1.5 * atr)
+                    stop_loss = current_price + (0.7 * atr)
+                    take_profit = current_price - (1.0 * atr)
             elif current_price > 0:
-                # Fallback: percentage-based
+                # Fallback: ultra-aggressive percentages
                 if direction == "long":
-                    stop_loss = current_price * 0.992  # 0.8% stop
-                    take_profit = current_price * 1.015  # 1.5% target
+                    stop_loss = current_price * 0.996  # 0.4% stop
+                    take_profit = current_price * 1.006 # 0.6% target
                 else:
-                    stop_loss = current_price * 1.008
-                    take_profit = current_price * 0.985
+                    stop_loss = current_price * 1.004
+                    take_profit = current_price * 0.994
         
         # Cap confidence
         confidence = min(confidence, 0.92)

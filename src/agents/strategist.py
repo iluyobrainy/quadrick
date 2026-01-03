@@ -157,10 +157,10 @@ LTF TRIGGER (15M/5M):
 
 TASK:
 1. Synthesize the Knowledge Base principles with the current Real-time Market Context.
-2. Predict the most likely price trajectory for the next 4-12 hours.
+2. Predict the immediate impulse trajectory for the next 5-15 minutes (next 5-10 candles on 1M/5M).
 3. Design a professional Trade Plan (Buy/Sell/Wait).
-   - If Buy/Sell, provide precise SL and TP as ABSOLUTE price levels (e.g. 67500.5), not percentages or offsets.
-   - Aim for a high Risk-to-Reward ratio (2:1 or better).
+   - If Buy/Sell, provide precise SL and TP as ABSOLUTE price levels.
+   - For Scalps: Ignore strict 2:1 R:R; use 1:1 if momentum is high. Target the 0.4% - 0.8% impulse move.
 
 OUTPUT JSON:
 {{
@@ -194,10 +194,10 @@ CODE-BASED HEURISTIC SIGNAL:
 - Reasoning: {signal.reasoning}
 
 TASK:
-1. Validate the Code Signal against the Market Regime.
+1. Validate the Code Signal against the Market Regime and the immediate 5-minute volatility.
 2. Refine the Entry, Stop Loss, and Take Profit.
-   - Provide SL and TP as ABSOLUTE price levels (e.g. 2.55), not percentages or offsets.
-   - You can adjust SL/TP slightly based on psychological levels or recent wicks.
+   - Provide SL and TP as ABSOLUTE price levels (e.g. 2.55).
+   - Prioritize "Capture the Impulse": Target rapid 0.5% moves. Adjust SL/TP to psychological levels.
    - If the Code Signal contradicts the Regime, VETO it (Action: "wait").
 
 OUTPUT JSON:

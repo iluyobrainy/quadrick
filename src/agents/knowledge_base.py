@@ -32,6 +32,11 @@ TRADING_KNOWLEDGE = {
             "setup": "Bollinger Band Width < 0.02 (Console/Squeeze).",
             "trigger": "15m candle close outside the bands + Volume > 2x average.",
             "execution": "Enter in the direction of the close. SL at the middle BB. TP at a 2.5:1 Risk/Reward ratio."
+        },
+        "RAPID_CRYPTO_SCALP": {
+            "setup": "High volatility (ATR > average) + 1M/5M trend alignment.",
+            "trigger": "Price impulse with 2.5x volume spike on 1M chart.",
+            "execution": "Enter for immediate momentum. Target 0.5% - 0.8% move. Use 1:1 R:R. Exit as soon as 1M momentum wanes."
         }
     },
     
@@ -39,7 +44,7 @@ TRADING_KNOWLEDGE = {
         "Never risk more than 1% of the total account balance on a single trade.",
         "Stop Loss must ALWAYS be placed at a structural invalidation point (e.g. below a swing low).",
         "If the market is 'Range/Chop', reduce position size by 50%.",
-        "Always target a minimum 2:1 Reward-to-Risk ratio."
+        "Target 2:1 Reward-to-Risk for trends, but allow 1:1 for Hyper-Scalps to capture quick volatility."
     ]
 }
 
