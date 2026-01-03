@@ -1,0 +1,49 @@
+# Bybit Trading System Requirements
+# Fully compatible with Python 3.12 (Windows 64-bit)
+
+# Exchange & API
+pybit>=5.7.0
+websockets>=12.0
+aiohttp>=3.9.0
+fastapi>=0.109.0
+uvicorn>=0.27.0
+
+# Data & Analysis
+numpy>=1.26.2
+pandas>=2.3.2
+# ta-lib==0.4.28  # Install separately from wheel for Windows
+pandas-ta==0.4.71b0
+
+# LLM Integration
+openai>=1.40.0
+anthropic>=0.34.0
+tiktoken>=0.7.0
+
+# Database
+sqlalchemy>=2.0.23
+aiosqlite>=0.19.0
+supabase>=2.7.0
+postgrest>=0.16.0
+
+# Utilities
+python-dotenv>=1.0.0
+loguru>=0.7.2
+pydantic>=2.6.0
+pydantic-settings>=2.1.0  # If this fails, pydantic will handle it
+schedule>=1.2.0
+rich>=13.7.0
+beautifulsoup4>=4.12.0  # For news scraping (future enhancement)
+
+# Monitoring & Alerts
+python-telegram-bot>=21.0
+discord-webhook>=1.3.0
+
+# Testing
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-mock==3.14.0
+
+# Development
+black==24.10.0
+flake8==7.1.1
+mypy==1.13.0

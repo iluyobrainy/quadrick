@@ -1,0 +1,68 @@
+# Railway ignore file - excludes files from deployment
+# Similar to .gitignore
+
+# Virtual environments
+quadenv/
+venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environment files (Railway uses environment variables instead)
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Node modules (for frontend - not needed for API server)
+quadend/node_modules/
+node_modules/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Data files
+data/
+*.db
+*.sqlite
+
+# Cache
+.cache/
+*.cache
+
+# Screenshots
+*.png
+*.jpg
+*.jpeg
+Screenshot*
+
+# Documentation (optional - remove if you want docs deployed)
+*.md
+!README.md
+
+# Large files
+*.whl
+img*.jpg
+

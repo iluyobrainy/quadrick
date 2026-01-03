@@ -1,0 +1,9 @@
+{
+  "mode": "active",
+  "pause_reason": null,
+  "pause_until": null,
+  "consecutive_losses": 0,
+  "cooldown_active": false,
+  "cooldown_until": null,
+  "last_updated": "2025-12-25T17:37:15.000000"
+}

@@ -1,0 +1,104 @@
+{
+  "status": {
+    "mode": "active",
+    "trading_allowed": true,
+    "pause_reason": null,
+    "consecutive_losses": 0,
+    "cooldown_active": false,
+    "connected": true
+  },
+  "balance": {
+    "total": 0.03059033,
+    "available": 0.0,
+    "unrealized_pnl": 0.0,
+    "daily_pnl": 0.0,
+    "daily_pnl_pct": 0.0
+  },
+  "logs": [
+    {
+      "timestamp": "2025-12-25T14:39:22.276256+00:00",
+      "level": "ERROR",
+      "message": "Failed to get positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:22).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:22.276256+00:00",
+      "level": "ERROR",
+      "message": "Failed to fetch positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:22).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T15:39:17.382696Z",
+      "level": "INFO",
+      "message": "Bybit time sync (periodic): offset 159 ms"
+    },
+    {
+      "timestamp": "2025-12-25T14:39:23.095737+00:00",
+      "level": "ERROR",
+      "message": "Failed to get positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:23).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:23.097343+00:00",
+      "level": "ERROR",
+      "message": "Failed to fetch positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:23).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:26.057280+00:00",
+      "level": "ERROR",
+      "message": "Failed to get positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:26).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:26.057280+00:00",
+      "level": "ERROR",
+      "message": "Failed to fetch positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:26).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:26.874855+00:00",
+      "level": "ERROR",
+      "message": "Failed to get positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:26).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:26.874855+00:00",
+      "level": "ERROR",
+      "message": "Failed to fetch positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:26).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:29.861648+00:00",
+      "level": "ERROR",
+      "message": "Failed to get positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:29).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:29.861648+00:00",
+      "level": "ERROR",
+      "message": "Failed to fetch positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:29).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:30.176111+00:00",
+      "level": "ERROR",
+      "message": "Failed to get positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:30).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:30.176111+00:00",
+      "level": "ERROR",
+      "message": "Failed to fetch positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:30).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:33.636176+00:00",
+      "level": "ERROR",
+      "message": "Failed to get positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:33).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:33.637178+00:00",
+      "level": "ERROR",
+      "message": "Failed to fetch positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:33).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:34.432171+00:00",
+      "level": "ERROR",
+      "message": "Failed to get positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:34).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    },
+    {
+      "timestamp": "2025-12-25T14:39:34.432171+00:00",
+      "level": "ERROR",
+      "message": "Failed to fetch positions: Http status code is not 200. (ErrCode: 401) (ErrTime: 14:39:34).\nRequest \u2192 GET https://api.bytick.com/v5/position/list: category=linear&settleCoin=USDT."
+    }
+  ]
+}

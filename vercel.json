@@ -1,0 +1,29 @@
+{
+    "version": 2,
+    "builds": [
+        {
+            "src": "api/**/*.py",
+            "use": "@vercel/python"
+        },
+        {
+            "src": "quadend/package.json",
+            "use": "@vercel/next"
+        }
+    ],
+    "rewrites": [
+        {
+            "source": "/api/(.*)",
+            "destination": "/api/index.py"
+        },
+        {
+            "source": "/(.*)",
+            "destination": "quadend/$1"
+        }
+    ],
+    "crons": [
+        {
+            "path": "/api/bot/pulse",
+            "schedule": "* * * * *"
+        }
+    ]
+}
