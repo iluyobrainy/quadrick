@@ -35,6 +35,19 @@ if __name__ == "__main__":
         env={**os.environ, "PYTHONUNBUFFERED": "1"}
     )
     
+    def cleanup():
+        print("\n🛑 Shutting down services...")
+        api_process.terminate()
+        bot_process.terminate()
+        try:
+            api_process.wait(timeout=5)
+            bot_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            print("⚠️ Services didn't stop in time, forcing kill...")
+            api_process.kill()
+            bot_process.kill()
+        print("✅ Shutdown complete.")
+
     try:
         # Keep the main script alive and monitor subprocesses
         while True:
@@ -44,12 +57,9 @@ if __name__ == "__main__":
             if bot_process.poll() is not None:
                 print("❌ Trading Bot stopped unexpectedly!")
                 break
-            time.sleep(5)
-    except KeyboardInterrupt:
-        print("\n🛑 Interrupt received, shutting down...")
+            time.sleep(2)
+    except (KeyboardInterrupt, SystemExit):
+        pass
     finally:
-        api_process.terminate()
-        bot_process.terminate()
-        api_process.wait()
-        bot_process.wait()
+        cleanup()
 
