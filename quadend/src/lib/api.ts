@@ -81,7 +81,6 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
         ...options,
         headers: {
             "Content-Type": "application/json",
-            "ngrok-skip-browser-warning": "true",
             ...options?.headers,
         },
     });
@@ -161,7 +160,7 @@ export const getPerformance = () => fetchAPI<{
 
 // SSE Log Streaming
 export function subscribeToLogs(onLog: (log: LogEntry) => void): () => void {
-    const eventSource = new EventSource(`${API_BASE}/api/logs/stream?ngrok-skip-browser-warning=true`);
+    const eventSource = new EventSource(`${API_BASE}/api/logs/stream`);
 
     eventSource.onmessage = (event) => {
         try {
