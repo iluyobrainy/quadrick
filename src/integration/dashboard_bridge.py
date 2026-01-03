@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from loguru import logger
 
-DASHBOARD_API_URL = "http://localhost:8001/internal"
+import os
+INTERNAL_PORT = os.getenv("PORT", "8001")
+DASHBOARD_API_URL = f"http://localhost:{INTERNAL_PORT}/internal"
 
 class DashboardBridge:
     """Sends updates to the local dashboard API"""
