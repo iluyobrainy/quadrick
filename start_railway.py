@@ -23,14 +23,20 @@ if __name__ == "__main__":
     print("\n🚀 Starting services...\n")
     
     # Run both API server and trading bot
-    print("🌐 Starting API Server...")
-    api_process = subprocess.Popen([sys.executable, "api_server.py"])
+    print("🌐 Starting API Server on port 8001...")
+    api_process = subprocess.Popen(
+        [sys.executable, "-u", "api_server.py"],
+        env={**os.environ, "PYTHONUNBUFFERED": "1"}
+    )
     
     print("🤖 Starting Trading Bot...")
-    bot_process = subprocess.Popen([sys.executable, "main.py"])
+    bot_process = subprocess.Popen(
+        [sys.executable, "-u", "main.py"],
+        env={**os.environ, "PYTHONUNBUFFERED": "1"}
+    )
     
     try:
-        # Wait for both processes
+        # Keep the main script alive and monitor subprocesses
         while True:
             if api_process.poll() is not None:
                 print("❌ API Server stopped unexpectedly!")

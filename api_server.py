@@ -60,11 +60,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*", "https://quadend.vercel.app", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+async def root():
+    return {"message": "Quadrick Dashboard API is running", "status": "ok"}
 
 # Shared state between dashboard and bot
 bot_state = {
@@ -582,7 +586,8 @@ if __name__ == "__main__":
         print("❌ Not connected to Bybit - run from quadrick directory with venv activated")
     
     # Use PORT from environment (Railway/Vercel) or default to 8000
-    port = int(os.getenv("PORT", 8001))
+    # FORCE port to 8001 to match Railway's manually generated domain
+    port = 8001
     
     print(f"\n🌐 Starting server on http://0.0.0.0:{port}")
     print("📊 Dashboard: http://localhost:3000")
