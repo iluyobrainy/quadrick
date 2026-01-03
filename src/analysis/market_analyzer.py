@@ -696,41 +696,34 @@ class MarketAnalyzer:
         if len(close) < 10:
             return patterns
         
-        # Candlestick patterns using pandas_ta
+        # Candlestick patterns (Manual detection to avoid TA-Lib log spam on Railway)
         try:
-            # Use pandas_ta candlestick patterns
-            df_copy = df.copy()
-            
-            # pandas_ta has candlestick pattern detection
-            df_copy.ta.cdl_pattern(name="all")
-            
-            # Check for bullish patterns (simplified detection)
-            if len(df_copy) >= 3:
-                last_candle = df_copy.iloc[-1]
-                prev_candle = df_copy.iloc[-2]
+            if len(df) >= 3:
+                last_candle = df.iloc[-1]
                 
                 # Simple pattern detection
                 body = abs(last_candle['close'] - last_candle['open'])
                 total_range = last_candle['high'] - last_candle['low']
                 
-                # Hammer-like pattern (only if total_range > 0 to avoid division by zero)
-                if total_range > 0 and body / total_range < 0.3 and last_candle['close'] > last_candle['open']:
-                    patterns.append("hammer_like")
-
-                # Shooting star-like (only if total_range > 0 to avoid division by zero)
-                elif total_range > 0 and body / total_range < 0.3 and last_candle['close'] < last_candle['open']:
-                    patterns.append("shooting_star_like")
-                
-                # Strong bullish candle (only if total_range > 0)
-                if total_range > 0 and last_candle['close'] > last_candle['open'] and body / total_range > 0.7:
-                    patterns.append("strong_bullish")
-
-                # Strong bearish candle (only if total_range > 0)
-                elif total_range > 0 and last_candle['close'] < last_candle['open'] and body / total_range > 0.7:
-                    patterns.append("strong_bearish")
+                # Ensure we don't divide by zero
+                if total_range > 0:
+                    # Hammer-like pattern
+                    if body / total_range < 0.3 and last_candle['close'] > last_candle['open']:
+                        patterns.append("hammer_like")
+    
+                    # Shooting star-like
+                    elif body / total_range < 0.3 and last_candle['close'] < last_candle['open']:
+                        patterns.append("shooting_star_like")
                     
+                    # Strong bullish candle
+                    if last_candle['close'] > last_candle['open'] and body / total_range > 0.7:
+                        patterns.append("strong_bullish")
+    
+                    # Strong bearish candle
+                    elif total_range > 0 and last_candle['close'] < last_candle['open'] and body / total_range > 0.7:
+                        patterns.append("strong_bearish")
         except Exception as e:
-            logger.debug(f"Simplified pattern detection used: {e}")
+            logger.debug(f"Simplified pattern detection failed: {e}")
         
         # Technical patterns
         

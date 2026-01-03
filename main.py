@@ -360,7 +360,7 @@ class QuadrickTradingBot:
                     bridge.update_raw_market_data(market_data)
 
                 # Analyze markets
-                print(f"DEBUG: Analyzing {len(market_data.get('tickers', {}))} symbols...")
+                # print(f"DEBUG: Analyzing {len(market_data.get('tickers', {}))} symbols...")
                 analysis = await self._analyze_markets(market_data)
                 
                 # Push technical analysis to dashboard for trader review
@@ -625,12 +625,12 @@ class QuadrickTradingBot:
                         )
                         klines[name] = data
                         if not data:
-                            print(f"DEBUG: \033[93mWarning: Empty klines for {symbol} ({name})\033[0m")
+                            pass # print(f"DEBUG: \033[93mWarning: Empty klines for {symbol} ({name})\033[0m")
                     except Exception as e:
                         logger.warning(f"Failed to fetch {name} klines for {symbol}: {e}")
                 
                 market_data["klines"][symbol] = klines
-                print(f"DEBUG: symbol {symbol} klines fetched: {list(klines.keys())}")
+                # print(f"DEBUG: symbol {symbol} klines fetched: {list(klines.keys())}")
                 
                 # Get funding rate
                 try:
