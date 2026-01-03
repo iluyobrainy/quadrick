@@ -142,18 +142,32 @@ class BybitClient:
             # Fallback/Custom
             pybit_domain = "bytick" if not testnet else "bybit"
 
-        # Initialize HTTP client
+        
+        logger.info(f"Using Bybit API URL: {self.BYBIT_API_URL if not testnet else self.BYBIT_TESTNET_API_URL}")
+        
+        # Initialize HTTP Session
         self.http = HTTP(
             testnet=testnet,
             api_key=api_key,
             api_secret=api_secret,
-            recv_window=20000,
+            recv_window=20000,  # Increased recv_window to reduce timeouts
             max_retries=5,
             retry_delay=2,
             force_retry=True,
             domain=pybit_domain  # Pass stem only
         )
         
+        # FORCE override the base URL in the internal session
+        # This is critical because pybit might default to bytick or bybit based on testnet flag
+        # We want to strictly use what's in the env vars
+        if testnet:
+            self.http.endpoint = self.BYBIT_TESTNET_API_URL
+        else:
+             self.http.endpoint = self.BYBIT_API_URL
+             
+        # Log the final endpoint to be 100% sure
+        logger.info(f"Final HTTP Session Endpoint: {self.http.endpoint}")
+
         # WebSocket clients will be initialized when needed
         self.ws_public = None
         self.ws_private = None
