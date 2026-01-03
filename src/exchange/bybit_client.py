@@ -132,9 +132,11 @@ class BybitClient:
 
         # Extract domain stem for pybit (e.g., "bytick" from "api.bytick.com")
         # pybit constructs URL as: https://{subdomain}.{domain}.{tld}
-        if "bytick" in target_domain:
+        if "bytick" in self.domain:
+            # For bytick, we need to be careful as pybit might expect standard bybit.com
+            # But we are passing the full URL manually to HTTP/WebSocket sessions below
             pybit_domain = "bytick"
-        elif "bybit" in target_domain:
+        elif "bybit" in self.domain:
             pybit_domain = "bybit"
         else:
             # Fallback/Custom
