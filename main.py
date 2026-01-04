@@ -1295,9 +1295,11 @@ class QuadrickTradingBot:
                     price=current_price,
                     risk_pct=risk_pct,
                     stop_loss=decision.stop_loss,
-                    take_profit=decision.take_profit_1,
-                    reason=decision.strategy_tag,
                 )
+            
+            # Immediate push after opening
+            await self._update_account_state()
+            logger.info(f"⚡ Critical Sync: Dashboard updated after opening {decision.symbol}")
             
         except Exception as e:
             logger.error(f"✗ Failed to place order: {e}")
@@ -1397,8 +1399,10 @@ class QuadrickTradingBot:
             # Clear smart execution data
             self.execution_manager.clear_position(symbol)
 
-            # Refresh cached positions
+            # Refresh cached positions and push immediately
             self.positions = self.bybit.get_positions()
+            await self._update_account_state()
+            logger.info(f"⚡ Critical Sync: Dashboard updated after closing {symbol}")
 
         except Exception as e:
             logger.error(f"✗ Failed to close position: {e}")

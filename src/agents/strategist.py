@@ -156,21 +156,22 @@ LTF TRIGGER (15M/5M):
 - Key Levels: {data.get('key_levels', 'N/A')}
 
 TASK:
-1. Synthesize the Knowledge Base principles with the current Real-time Market Context.
-2. Predict the immediate impulse trajectory for the next 5-15 minutes (next 5-10 candles on 1M/5M).
-3. Design a professional Trade Plan (Buy/Sell/Wait).
-   - If Buy/Sell, provide precise SL and TP as ABSOLUTE price levels.
-   - For Scalps: Ignore strict 2:1 R:R; use 1:1 if momentum is high. Target the 0.4% - 0.8% impulse move.
+1. FORECAST: Analyze the 1-minute chart. Predict the Price Action for the next 2-5 minutes (Next 3 candles).
+2. DIRECTION: Is the impulse UP or DOWN? (Check for Short opportunities aggressively).
+3. TRADE PLAN:
+   - SL: The price level that INVALIDATES your 2-minute forecast.
+   - TP: The peak of the impulse.
+   - RISK: High conviction = High leverage.
 
 OUTPUT JSON:
 {{
     "action": "buy" | "sell" | "wait",
     "entry_price": {current_price},
-    "stop_loss": float,
-    "take_profit": float,
-    "risk_pct": float (suggest 1.0 to 15.0 - for tiny balances < $20, use 10-15% to meet exchange minimum sizes),
+    "stop_loss": float (Invalidation Level),
+    "take_profit": float (Impulse Target),
+    "risk_pct": float (suggest 1.0 to 15.0),
     "confidence": 0.0 to 1.0,
-    "reasoning": "Detailed technical explanation based on principles (e.g. 'Waiting for liquidity sweep of 67500 before entry')..."
+    "reasoning": "Forecast: Price will reject off {{level}} and drop to..."
 }}
 """
 
@@ -194,20 +195,22 @@ CODE-BASED HEURISTIC SIGNAL:
 - Reasoning: {signal.reasoning}
 
 TASK:
-1. Validate the Code Signal against the Market Regime and the immediate 5-minute volatility.
-2. Refine the Entry, Stop Loss, and Take Profit.
-   - Provide SL and TP as ABSOLUTE price levels (e.g. 2.55).
-   - Prioritize "Capture the Impulse": Target rapid 0.5% moves. Adjust SL/TP to psychological levels.
-   - If the Code Signal contradicts the Regime, VETO it (Action: "wait").
+1. FORECAST: Predict the exact price action for the next 2-5 minutes (next 3-5 candles).
+2. DETERMINE TREND: Is the *immediate* impulse UP (Long) or DOWN (Short)? (Do not bias towards Long).
+3. DESIGN SNIPER PLAN:
+   - If Forecast is Neutral/Weak -> WAIT.
+   - If Forecast is Strong -> ENTER.
+   - STOP LOSS: Must be the specific INVALIDATION LEVEL of your forecast (Where is the thesis wrong?).
+   - TAKE PROFIT: maximise profit based on the impulse velocity.
 
 OUTPUT JSON:
 {{
     "action": "buy" | "sell" | "wait",
     "entry_price": {current_price},
-    "stop_loss": float,
-    "take_profit": float,
-    "risk_pct": float (suggest 1.0 to 15.0 - for tiny balances < $20, use 10-15% to meet exchange minimum sizes),
+    "stop_loss": float (Absolute Prediction Invalidation Level),
+    "take_profit": float (Impulse Max Target),
+    "risk_pct": float (suggest 1.0 to 15.0),
     "confidence": 0.0 to 1.0,
-    "reasoning": "Brief explanation..."
+    "reasoning": "Forecast: Price will sweep {{level}} then reject..."
 }}
 """
