@@ -1073,8 +1073,9 @@ class QuadrickTradingBot:
         # Round to appropriate decimal places using Bybit rules
         position_size = self.bybit.round_quantity(decision.symbol, position_size)
         
-        # Absolute minimum notional check (Bybit usually requires ~$1.0 minimum per order)
-        min_value = 1.10 if self.account_balance >= 3 else 0.5 # Safe minimum for UTA
+        # Absolute minimum notional check (Bybit requires 5 USDT min for most pairs)
+        # We set a buffer of 5.5 USDT to be safe.
+        min_value = 5.5 
         
         current_notional = position_size * current_price
         if current_notional < min_value:
