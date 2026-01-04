@@ -872,10 +872,6 @@ class QuadrickTradingBot:
             # Check trailing stop updates
             if take_profit:
                 try:
-                    # Debug: check what parameters we're passing
-                    import inspect
-                    sig = inspect.signature(self.execution_manager.update_trailing_stop)
-                    logger.debug(f"update_trailing_stop signature: {sig}")
 
                     trailing_update = self.execution_manager.update_trailing_stop(
                         symbol=symbol,
@@ -1597,6 +1593,45 @@ class QuadrickTradingBot:
                     logger.info(f"Closed {position.symbol}")
                 except Exception as e:
                     logger.error(f"Failed to close {position.symbol}: {e}")
+
+            # ------------------------------------------------------------------
+            # INTELLIGENT REVERSAL TRIGGER (The "SECURE THE BAG" Logic)
+            # ------------------------------------------------------------------
+            # Calculate PnL pct for this specific position
+            unrealized_pnl = float(position.unrealised_pnl)
+            position_value = float(position.value)
+            
+            if position_value > 0:
+                pnl_pct = (unrealized_pnl / position_value) * 100
+                
+                # Fetch fresh market context for this symbol if available
+                market_data = {}
+                if hasattr(self, 'active_analysis') and symbol in self.active_analysis:
+                     market_data = self.active_analysis[symbol]
+
+                # Check Guard
+                exit_reason = self.execution_manager.check_reversal_guard(
+                    symbol=symbol,
+                    side=side,
+                    current_price=current_price,
+                    entry_price=entry_price,
+                    pnl_pct=pnl_pct,
+                    market_data=market_data
+                )
+
+                if exit_reason:
+                    logger.warning(f"🚨 SMART GUARD TRIGGERED for {symbol}: {exit_reason}")
+                    # Construct a close decision
+                    close_decision = self.deepseek._parse_decision(json.dumps({
+                        "decision_type": "close_position",
+                        "symbol": symbol,
+                        "reasoning": f"Smart Guard Exit: {exit_reason}",
+                        "decision_id": str(uuid.uuid4())
+                    }))
+                    await self._close_position(close_decision)
+                    return
+            # ------------------------------------------------------------------
+
         
         # Close Telegram session
         if self.telegram:

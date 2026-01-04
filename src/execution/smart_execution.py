@@ -353,3 +353,53 @@ class SmartExecutionManager:
         
         return False
 
+        return False
+
+    def check_reversal_guard(
+        self,
+        symbol: str,
+        side: str,
+        current_price: float,
+        entry_price: float,
+        pnl_pct: float,
+        market_data: Dict[str, Any]
+    ) -> Optional[str]:
+        """
+        Smart Reversal Guard: Checks if a profitable position is showing signs of reversal.
+        Returns a reason string if the trade should be closed immediately.
+        """
+        # 1. Only guard if we have decent profit (e.g. > 0.3%)
+        # We don't want to panic exit small fluctuations around breakeven
+        if pnl_pct < 0.3:
+            return None
+
+        # Extract indicators
+        tf_analysis = market_data.get("timeframe_analysis", {})
+        # Look at 1m or 5m for immediate reversal signs
+        m1_data = tf_analysis.get("1m", {})
+        m5_data = tf_analysis.get("5m", {})
+        
+        # Use available LTF data
+        ltf_data = m1_data if m1_data else m5_data
+        if not ltf_data:
+            return None
+
+        rsi = ltf_data.get("indicators", {}).get("rsi", 50)
+        volume_ratio = ltf_data.get("indicators", {}).get("volume_ratio", 1.0)
+        
+        # 2. RSI Momentum Decay Check
+        # If we are Long and RSI drops hard from overbought (e.g. was 75, now 60)
+        # Or simply if RSI shows weakness while price is stalling
+        if side == "Buy":
+            if rsi < 50: 
+                return f"Momentum Death (Long): RSI dropped to {rsi:.1f} while in profit"
+        else: # Sell
+            if rsi > 50:
+                return f"Momentum Death (Short): RSI rose to {rsi:.1f} while in profit"
+
+        # 3. Volume Exhaustion Check
+        # If price is stalling (implied by this check running) and volume dies
+        if volume_ratio < 0.5:
+             return f"Volume Exhaustion: Volume ratio {volume_ratio:.2f} too low to sustain move"
+
+        return None
