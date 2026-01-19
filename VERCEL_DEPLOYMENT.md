@@ -166,3 +166,6 @@ After deployment:
 3. Configure bot to write to Supabase
 4. Test the full system!
 
+
+
+

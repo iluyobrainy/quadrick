@@ -146,3 +146,6 @@ app.add_middleware(
 - After updating environment variables, you need to redeploy for changes to take effect
 - Vercel provides automatic HTTPS and custom domains
 
+
+
+
