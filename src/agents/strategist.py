@@ -157,7 +157,7 @@ LTF TRIGGER (15M/5M):
 
 TASK:
 1. FORECAST: Analyze the 1-minute chart. Predict the Price Action for the next 2-5 minutes (Next 3 candles).
-2. DIRECTION: Is the impulse UP or DOWN? (Check for Short opportunities aggressively).
+2. DIRECTION: Determine whether the impulse is UP (Long) or DOWN (Short). Evaluate both directions equally without bias.
 3. TRADE PLAN:
    - SL: The price level that INVALIDATES your 2-minute forecast.
    - TP: The peak of the impulse.
@@ -196,7 +196,7 @@ CODE-BASED HEURISTIC SIGNAL:
 
 TASK:
 1. FORECAST: Predict the exact price action for the next 2-5 minutes (next 3-5 candles).
-2. DETERMINE TREND: Is the *immediate* impulse UP (Long) or DOWN (Short)? (Do not bias towards Long).
+2. DETERMINE TREND: Is the *immediate* impulse UP (Long) or DOWN (Short)? Analyze objectively without directional bias.
 3. DESIGN SNIPER PLAN:
    - If Forecast is Neutral/Weak -> WAIT.
    - If Forecast is Strong -> ENTER.
