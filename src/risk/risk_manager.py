@@ -157,6 +157,41 @@ class RiskManager:
                     f"Risk adjusted from {risk_pct}% to {adjusted_risk}%"
                 )
                 risk_pct = adjusted_risk
+
+        # 3.5 Volatility-aware risk scaling (within 10–30% band)
+        if market_analysis:
+            symbol = trade_decision.get("symbol", "")
+            tf_analysis = {}
+            if symbol in market_analysis:
+                tf_analysis = market_analysis.get(symbol, {}).get("timeframe_analysis", {})
+            else:
+                symbol_analysis = market_analysis.get("technical_analysis", {}).get(symbol, {})
+                tf_analysis = symbol_analysis.get("timeframe_analysis", {}) or symbol_analysis.get("timeframes", {})
+
+            current_atr = (
+                tf_analysis.get("15m", {}).get("atr")
+                or tf_analysis.get("5m", {}).get("atr")
+                or tf_analysis.get("1m", {}).get("atr")
+            )
+            avg_atr = (
+                tf_analysis.get("1h", {}).get("atr")
+                or tf_analysis.get("4h", {}).get("atr")
+                or current_atr
+            )
+
+            if current_atr and avg_atr:
+                scaled_risk = self.adjust_risk_for_volatility(
+                    base_risk_pct=risk_pct,
+                    current_atr=float(current_atr),
+                    avg_atr=float(avg_atr),
+                )
+                scaled_risk = max(self.min_risk_pct, min(self.max_risk_pct, scaled_risk))
+                if abs(scaled_risk - risk_pct) > 0.01:
+                    validation.adjusted_risk_pct = scaled_risk
+                    validation.warnings.append(
+                        f"Volatility-scaled risk: {risk_pct:.1f}% → {scaled_risk:.1f}%"
+                    )
+                    risk_pct = scaled_risk
         
         # 4. Check daily drawdown
         current_drawdown = self._calculate_daily_drawdown(account_balance)

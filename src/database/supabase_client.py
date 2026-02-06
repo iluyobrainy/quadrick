@@ -177,19 +177,38 @@ class SupabaseClient:
             # Convert TimeframeAnalysis object to dict if needed
             if hasattr(tf_data, 'indicators'):
                 # It's a TimeframeAnalysis object, extract what we need
+                current_price = market_data.get("current_price", 0)
+                bb_position = "middle"
+                if current_price and getattr(tf_data.indicators, "bb_upper", None) is not None:
+                    if current_price >= tf_data.indicators.bb_upper:
+                        bb_position = "upper"
+                    elif current_price <= tf_data.indicators.bb_lower:
+                        bb_position = "lower"
+
+                order_flow = market_data.get("order_flow", {}) or {}
+
                 tf_dict = {
                     "rsi": getattr(tf_data.indicators, 'rsi', 50),
                     "trend": getattr(tf_data.structure, 'trend', 'neutral').value if hasattr(getattr(tf_data.structure, 'trend', None), 'value') else str(getattr(tf_data.structure, 'trend', 'neutral')),
                     "atr": getattr(tf_data.indicators, 'atr', 0),
                     "close": getattr(tf_data.indicators, 'close', [0])[-1] if hasattr(getattr(tf_data.indicators, 'close', []), '__getitem__') else 0,
                     "macd_signal": getattr(tf_data.indicators, 'macd_signal', 'neutral').value if hasattr(getattr(tf_data.indicators, 'macd_signal', None), 'value') else str(getattr(tf_data.indicators, 'macd_signal', 'neutral')),
-                    "current_price": market_data.get("current_price", 0)
+                    "current_price": current_price,
+                    "volume_ratio": getattr(tf_data.indicators, 'volume_ratio', 1.0),
+                    "adx": getattr(tf_data.indicators, 'adx', 25),
+                    "bb_position": bb_position,
+                    "order_flow_imbalance": order_flow.get("bid_ask_imbalance"),
+                    "spread_pct": order_flow.get("spread_pct"),
                 }
                 tf_data = tf_dict
             
             # Add current price if missing
             if "current_price" not in tf_data:
                 tf_data["current_price"] = market_data.get("current_price", 0)
+            if "order_flow_imbalance" not in tf_data or "spread_pct" not in tf_data:
+                order_flow = market_data.get("order_flow", {}) or {}
+                tf_data.setdefault("order_flow_imbalance", order_flow.get("bid_ask_imbalance"))
+                tf_data.setdefault("spread_pct", order_flow.get("spread_pct"))
             
             # Vectorize current context
             query_vector = self._vectorize_context(tf_data)
@@ -220,8 +239,8 @@ class SupabaseClient:
         Vector Dimensions (8D for enhanced similarity matching):
         [0]: RSI / 100 (0-1)
         [1]: Trend (-1, 0, 1)
-        [2]: Volatility (ATR% normalized)
-        [3]: Momentum (MACD signal)
+        [2]: Volatility (ATR% + spread% normalized)
+        [3]: Momentum (MACD signal + order flow imbalance)
         [4]: ADX / 100 (trend strength, 0-1)
         [5]: Volume Ratio (normalized, 0-1)
         [6]: BB Position (-1 lower, 0 middle, 1 upper)
@@ -240,14 +259,19 @@ class SupabaseClient:
             }
             trend = trend_map.get(trend_str, 0.0)
             
-            # [2] Volatility (ATR as % of price)
+            # [2] Volatility (ATR as % of price + spread%)
             atr = float(context.get("atr", 0))
             price = float(context.get("close", context.get("current_price", 1)))
             volatility_pct = (atr / price * 100) if price > 0 else 0
-            
+            spread_pct = float(context.get("spread_pct", 0) or 0)
+            volatility_pct += spread_pct * 2.0
+
             # [3] Momentum (MACD signal)
             macd_signal = str(context.get("macd_signal", "neutral")).lower()
             momentum = 1.0 if macd_signal == "bullish" else (-1.0 if macd_signal == "bearish" else 0.0)
+            imbalance = float(context.get("order_flow_imbalance", 1.0) or 1.0)
+            imbalance_momentum = max(min(imbalance - 1.0, 1.0), -1.0)
+            momentum = (momentum + imbalance_momentum) / 2.0
             
             # [4] ADX (trend strength) - NEW
             adx = float(context.get("adx", 25))
@@ -286,5 +310,3 @@ class SupabaseClient:
         except Exception as e:
             logger.warning(f"Vectorization failed: {e}")
             return [0.0] * 8  # Return 8-dimension zero vector
-
-

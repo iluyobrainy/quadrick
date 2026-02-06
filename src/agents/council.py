@@ -1,5 +1,5 @@
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 from loguru import logger
 from src.agents.analyst import AnalystAgent, MarketRegime
@@ -126,7 +126,13 @@ class TradingCouncil:
         
         if plan.action == "wait":
             return self._create_wait_decision(symbol, f"Strategist decided to wait: {plan.reasoning}")
-        
+
+        # 3.25 Scalping filters (regime + microstructure)
+        scalping_ok, scalping_reason = self._passes_scalping_filters(symbol, market_data, plan, regime)
+        if not scalping_ok:
+            logger.warning(f"⚠️ {symbol}: Scalping filter blocked trade - {scalping_reason}")
+            return self._create_wait_decision(symbol, f"Scalping filter blocked: {scalping_reason}")
+
         # 3.5 Multi-Timeframe Confirmation (NEW)
         htf_aligned = self._check_htf_alignment(symbol, market_data, plan.action)
         if not htf_aligned:
@@ -190,6 +196,30 @@ class TradingCouncil:
             "symbol": symbol,
             "reasoning": {"reason": reason}
         }
+
+    def _passes_scalping_filters(self, symbol: str, data: Dict[str, Any], plan: TradePlan, regime: MarketRegime) -> Tuple[bool, str]:
+        """Apply lightweight scalping filters using regime + order flow."""
+        if regime.regime == "low_volatility":
+            return False, "low volatility regime"
+
+        tf = data.get("timeframe_analysis", {})
+        tf_15m = tf.get("15m", {}) or {}
+        volume_ratio = float(tf_15m.get("volume_ratio", 1.0) or 1.0)
+        if volume_ratio < 1.1:
+            return False, f"volume ratio too low ({volume_ratio:.2f}x)"
+
+        order_flow = data.get("order_flow") or {}
+        spread_pct = float(order_flow.get("spread_pct", 0.0) or 0.0)
+        if spread_pct and spread_pct > 0.12:
+            return False, f"spread too wide ({spread_pct:.3f}%)"
+
+        market_pressure = str(order_flow.get("market_pressure", "unknown"))
+        if plan.action == "buy" and market_pressure in {"strong_selling", "moderate_selling"}:
+            return False, f"order flow against long ({market_pressure})"
+        if plan.action == "sell" and market_pressure in {"strong_buying", "moderate_buying"}:
+            return False, f"order flow against short ({market_pressure})"
+
+        return True, "ok"
     
     def _check_htf_alignment(self, symbol: str, data: Dict[str, Any], direction: str) -> bool:
         """

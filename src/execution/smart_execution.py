@@ -191,6 +191,7 @@ class SmartExecutionManager:
         self,
         symbol: str,
         current_price: float,
+        side: str,
     ) -> Optional[Dict[str, Any]]:
         """
         Check if partial profit should be taken
@@ -209,8 +210,22 @@ class SmartExecutionManager:
             if target["executed"]:
                 continue
             
-            # Check if price hit target
-            if current_price >= target["price"]:
+            # Check if price hit target based on position side
+            if side == "Buy" and current_price >= target["price"]:
+                target["executed"] = True
+
+                logger.info(
+                    f"{symbol} partial profit triggered: "
+                    f"Take {target['percentage']}% at ${target['price']}"
+                )
+
+                return {
+                    "symbol": symbol,
+                    "amount": target["amount"],
+                    "price": target["price"],
+                    "percentage": target["percentage"],
+                }
+            if side == "Sell" and current_price <= target["price"]:
                 target["executed"] = True
                 
                 logger.info(

@@ -79,7 +79,7 @@ class HybridDeepSeekClient:
 - Historical performance and trade results
 
 ⚙️ TRADING CONSTRAINTS:
-- Risk per trade: scale with account size (for balances under $20 you may risk 6-10%, increase gradually as equity grows)
+- Risk per trade: 10-30% (respect the risk range provided in system_state)
 - Maximum leverage: 50x (use responsibly)
 - Always set appropriate stop losses
 - Consider portfolio diversification
@@ -118,7 +118,7 @@ class HybridDeepSeekClient:
 - Look for HIGH-QUALITY setups aggressively, not just any trade
 - Small accounts need SMART trades to grow - bad trades kill accounts faster
 - When `force_trade` is true, find the BEST available setup, not the first one
-- With <$20 balance: Use 15-25% risk ONLY on A+ setups with clear edge
+- With small balances, favor the lower end of the allowed risk range unless the setup is exceptionally strong
 - Required for entry: Clear trend, momentum alignment, risk/reward > 1.5:1
 - Manage existing trades proactively: bump stops, trail profits, close losers quickly, and recycle capital into better opportunities
 - Success = Taking CALCULATED risks with technical edge, not gambling
@@ -495,8 +495,8 @@ class DeepSeekClient:
         self.temperature = temperature
         self.max_retries = max_retries
         self.consecutive_waits: int = 0
-        # Force an actionable trade immediately - no WAITs allowed for tiny balances
-        self.max_consecutive_waits: int = 0
+        # Allow the model to wait for higher-conviction setups
+        self.max_consecutive_waits: int = 2
         
         # Note: OpenAI client is now created per-request in _call_deepseek()
         # to support new openai>=1.0.0 API
@@ -824,7 +824,9 @@ class DeepSeekClient:
     def prepare_market_context(
         self,
         account_balance: float,
+        available_balance: Optional[float],
         positions: List[Dict[str, Any]],
+        position_monitor: Optional[Dict[str, Any]],
         market_data: Dict[str, Any],
         technical_analysis: Dict[str, Any],
         funding_rates: Dict[str, float],
@@ -835,13 +837,18 @@ class DeepSeekClient:
         similar_trades: List[Dict[str, Any]] = None,
         portfolio_metrics: Dict[str, Any] = None,
         strategy_insights: Dict[str, Any] = None,
+        order_flow_data: Optional[Dict[str, Any]] = None,
+        sentiment_data: Optional[Dict[str, Any]] = None,
+        onchain_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Prepare comprehensive market context for LLM
         
         Args:
             account_balance: Current account balance
+            available_balance: Available balance for new margin
             positions: Open positions
+            position_monitor: Position monitor summary
             market_data: Current market prices and volumes
             technical_analysis: TA for multiple symbols/timeframes
             funding_rates: Current funding rates
@@ -861,22 +868,9 @@ class DeepSeekClient:
             ]
             daily_pnl = sum(t.get("pnl", 0) for t in today_trades)
         
-        # Determine risk mode
-        if account_balance >= 500:
-            risk_mode = "maximum_aggressive"
-            allowed_risk_range = [22, 30]
-        elif account_balance >= 200:
-            risk_mode = "moderate_aggressive"
-            allowed_risk_range = [18, 25]
-        elif account_balance >= 50:
-            risk_mode = "moderate"
-            allowed_risk_range = [15, 22]
-        elif account_balance >= 20:
-            risk_mode = "conservative"
-            allowed_risk_range = [8, 12]
-        else:
-            risk_mode = "capital_preservation"
-            allowed_risk_range = [6, 8]
+        # Determine risk mode (bounded by configured 10-30% policy)
+        risk_mode = "bounded"
+        allowed_risk_range = [10, 30]
         
         current_stage = None
         next_target_value = None
@@ -900,7 +894,7 @@ class DeepSeekClient:
             },
             
             "account_state": {
-                "available_balance": account_balance,
+                "available_balance": available_balance if available_balance is not None else account_balance,
                 "margin_used": sum(p.get("margin", 0) for p in positions),
                 "unrealized_pnl": sum(p.get("unrealized_pnl", 0) for p in positions),
                 "open_positions": positions,
@@ -917,6 +911,10 @@ class DeepSeekClient:
             },
             
             "technical_analysis": technical_analysis,
+            "position_monitor": position_monitor or {},
+            "order_flow": order_flow_data or {},
+            "sentiment": sentiment_data or {},
+            "onchain": onchain_data or {},
             
             "performance_feedback": performance_feedback or {},
             "similar_trades": similar_trades or [],

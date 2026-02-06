@@ -24,6 +24,7 @@ async def debug_deepseek_data():
 
     context = bot.deepseek.prepare_market_context(
         account_balance=bot.account_balance,
+        available_balance=bot.available_balance,
         positions=positions_data,
         position_monitor=position_monitor_summary,
         market_data=market_data,

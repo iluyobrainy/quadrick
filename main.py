@@ -257,7 +257,9 @@ class QuadrickTradingBot:
         try:
             test_context = self.deepseek.prepare_market_context(
                 account_balance=self.account_balance,
+                available_balance=self.available_balance,
                 positions=[],
+                position_monitor={"total_positions": 0, "positions": []},
                 market_data={"btc_24h_change": 0},
                 technical_analysis={},
                 funding_rates={},
@@ -389,11 +391,40 @@ class QuadrickTradingBot:
                 all_decisions = []
                 
                 # Rank watchlist by current 15m relative volume to find "alive" coins first
+                def _scalping_score(symbol: str) -> float:
+                    data = analysis.get(symbol, {})
+                    tf = data.get("timeframe_analysis", {})
+                    tf_15m = tf.get("15m", {}) or {}
+                    tf_1h = tf.get("1h", {}) or {}
+                    volume_ratio = float(tf_15m.get("volume_ratio", 0) or 0)
+                    trend_15m = str(tf_15m.get("trend", "neutral")).lower()
+                    trend_1h = str(tf_1h.get("trend", "neutral")).lower()
+
+                    order_flow = data.get("order_flow") or {}
+                    spread_pct = float(order_flow.get("spread_pct", 0) or 0)
+                    pressure = str(order_flow.get("market_pressure", "balanced"))
+
+                    score = volume_ratio * 10
+                    if trend_15m != "neutral" and trend_1h != "neutral" and trend_15m == trend_1h:
+                        score += 5
+                    if pressure in {"strong_buying", "moderate_buying", "strong_selling", "moderate_selling"}:
+                        score += 3
+                    if spread_pct > 0:
+                        score -= min(spread_pct * 100, 5)
+                    return score
+
                 ranked_watchlist = sorted(
                     self.watchlist,
-                    key=lambda s: analysis.get(s, {}).get("timeframe_analysis", {}).get("15m", {}).get("volume_ratio", 0),
-                    reverse=True
+                    key=_scalping_score,
+                    reverse=True,
                 )
+
+                # Deterministic preselection: only evaluate top N symbols with meaningful score
+                scored_candidates = [
+                    symbol for symbol in ranked_watchlist if _scalping_score(symbol) >= 8
+                ][:5]
+                if scored_candidates:
+                    ranked_watchlist = scored_candidates
                 
                 # Iterate through ranked watchlist to find opportunities
                 for symbol in ranked_watchlist:
@@ -729,6 +760,7 @@ class QuadrickTradingBot:
                     "timeframe_analysis": serializable_analysis,
                     "sentiment": sentiment,
                     "current_price": market_data["tickers"][symbol].last_price,
+                    "order_flow": market_data.get("order_flow", {}).get(symbol),
                 }
                 
             except Exception as e:
@@ -845,6 +877,7 @@ class QuadrickTradingBot:
         # Build context
         context = self.deepseek.prepare_market_context(
             account_balance=self.account_balance,
+            available_balance=self.available_balance,
             positions=positions_data,
             position_monitor=position_monitor_summary,
             market_data=market_data,
@@ -934,7 +967,7 @@ class QuadrickTradingBot:
                     pnl_pct = (entry_price - current_price) / entry_price * 100
 
                 if pnl_pct > 1.0:  # Only if at least 1% profit
-                    partial = self.execution_manager.should_take_partial_profit(symbol, current_price)
+                    partial = self.execution_manager.should_take_partial_profit(symbol, current_price, side)
                     if partial:
                         try:
                             # Execute partial close
@@ -1004,6 +1037,64 @@ class QuadrickTradingBot:
             ticker = self.bybit.get_ticker(decision.symbol)
         
         current_price = ticker.last_price
+        if not decision.side:
+            logger.warning("No side specified in decision")
+            return
+
+        def _resolve_atr(symbol: str) -> float:
+            symbol_analysis = analysis.get(symbol, {})
+            tf_data = symbol_analysis.get("timeframes", {})
+            preferred_tfs = ["15m", "5m", "1h", "1m"]
+            for tf in preferred_tfs:
+                tf_obj = tf_data.get(tf)
+                if tf_obj and hasattr(tf_obj, "indicators"):
+                    atr_val = getattr(tf_obj.indicators, "atr", 0) or 0
+                    if atr_val > 0:
+                        return float(atr_val)
+            return max(float(current_price) * 0.002, 0.0)
+
+        def _apply_sl_tp_guardrails(entry_price: float, side: str):
+            atr = _resolve_atr(decision.symbol)
+            rr_min = 1.5
+
+            stop_loss = float(decision.stop_loss or 0)
+            take_profit = float(decision.take_profit_1 or 0)
+
+            if side == "Buy":
+                sl_ok = stop_loss > 0 and stop_loss < entry_price
+                tp_ok = take_profit > entry_price
+                risk_dist = entry_price - stop_loss if sl_ok else 0
+                reward_dist = take_profit - entry_price if tp_ok else 0
+            else:
+                sl_ok = stop_loss > entry_price
+                tp_ok = take_profit > 0 and take_profit < entry_price
+                risk_dist = stop_loss - entry_price if sl_ok else 0
+                reward_dist = entry_price - take_profit if tp_ok else 0
+
+            rr_ok = risk_dist > 0 and reward_dist / risk_dist >= rr_min
+
+            if not (sl_ok and tp_ok and rr_ok):
+                if side == "Buy":
+                    stop_loss = entry_price - (atr * 1.2)
+                    take_profit = entry_price + (atr * 2.0)
+                else:
+                    stop_loss = entry_price + (atr * 1.2)
+                    take_profit = max(entry_price - (atr * 2.0), entry_price * 0.5)
+
+                logger.warning(
+                    f"Adjusted SL/TP via ATR guardrails for {decision.symbol} {side}: "
+                    f"SL={stop_loss:.4f}, TP={take_profit:.4f} (ATR={atr:.4f})"
+                )
+
+            return stop_loss, take_profit, atr
+
+        adjusted_stop_loss, adjusted_take_profit, atr = _apply_sl_tp_guardrails(
+            entry_price=current_price,
+            side=decision.side,
+        )
+
+        decision.stop_loss = adjusted_stop_loss
+        decision.take_profit_1 = adjusted_take_profit
         
         # Validate trade with risk manager
         trade_data = {
@@ -1197,11 +1288,12 @@ class QuadrickTradingBot:
             # Setup smart execution features
             if decision.take_profit_1:
                 # Setup trailing stop
+                trail_distance_pct = max(0.3, min(1.2, (atr / current_price) * 100 * 0.6))
                 self.execution_manager.setup_trailing_stop(
                     symbol=decision.symbol,
                     side=decision.side,
                     initial_stop=adjusted_stop_loss,  # Use adjusted SL
-                    trail_distance_pct=0.5,
+                    trail_distance_pct=trail_distance_pct,
                     current_price=current_price,
                     entry_price=current_price,
                 )
@@ -1269,11 +1361,25 @@ class QuadrickTradingBot:
                         symbol_analysis = analysis[decision.symbol]
                         tf_1h = symbol_analysis["timeframes"].get("1h")
                         if tf_1h:
+                            order_flow = market_data.get("order_flow", {}).get(decision.symbol, {})
+                            bb_position = "middle"
+                            if current_price >= tf_1h.indicators.bb_upper:
+                                bb_position = "upper"
+                            elif current_price <= tf_1h.indicators.bb_lower:
+                                bb_position = "lower"
+
                             context_snapshot = {
                                 "rsi": tf_1h.indicators.rsi,
                                 "trend": tf_1h.structure.trend.value,
                                 "atr_pct": (tf_1h.indicators.atr / current_price * 100),
-                                "price_24h_change_pct": market_data["tickers"][decision.symbol].price_24h_change * 100
+                                "price_24h_change_pct": market_data["tickers"][decision.symbol].price_24h_change * 100,
+                                "volume_ratio": tf_1h.indicators.volume_ratio,
+                                "adx": getattr(tf_1h.indicators, "adx", 0),
+                                "bb_position": bb_position,
+                                "macd_signal": "bullish" if tf_1h.indicators.macd_histogram > 0 else "bearish",
+                                "current_price": current_price,
+                                "order_flow_imbalance": order_flow.get("bid_ask_imbalance"),
+                                "spread_pct": order_flow.get("spread_pct"),
                             }
                             self.active_trade_contexts[decision.symbol] = context_snapshot
                             # Save to Supabase for persistence across restarts
