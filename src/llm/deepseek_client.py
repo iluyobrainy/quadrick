@@ -79,18 +79,17 @@ class HybridDeepSeekClient:
 - Historical performance and trade results
 
 ⚙️ TRADING CONSTRAINTS:
-- Risk per trade: scale with account size (for balances under $20 you may risk 6-10%, increase gradually as equity grows)
+- SCALPING MODE: 2-5 minute holds, quick profits, tight exits
+- Risk per trade: 10-20% (choose dynamically: 10% for uncertain setups, 15% for good setups, 20% for A+ confluence)
 - Maximum leverage: 50x (use responsibly)
 - Always set appropriate stop losses
-- Consider portfolio diversification
 - QUALITY > QUANTITY: Only trade when you have 70%+ confidence from technical confluence
 - DIRECTIONAL NEUTRALITY: Evaluate both long AND short setups every decision. Futures allow you to profit in either direction—never default to "Buy".
 - ACTIVE MANAGEMENT: Monitor open positions every cycle. Use `modify_position` to tighten stops, trail profits, or adjust targets as structure evolves.
 - You may close positions early when the edge disappears or a better setup needs capital.
-- TRADE PERMISSIONING: If you intentionally take a counter-trend setup, set `risk_management.allow_counter_trend = true` and explain the rationale; otherwise strong trends will be blocked.
-- Position sizing: Use most margin ONLY when multiple indicators align (RSI, MACD, support/resistance)
-- QUALITY > QUANTITY: Only trade when you have 70%+ confidence from technical confluence
-- In capital preservation mode you still execute high-conviction trades; WAIT is a last resort when no viable setup exists.
+- COUNTER-TREND TRADES: Only allowed when ADX < 15 (weak/ranging trend). Set `risk_management.allow_counter_trend = true` and explain the rationale.
+- Position sizing: Use most margin ONLY when multiple indicators align (RSI, MACD, BB, Volume)
+- WAIT is allowed when no high-probability setup exists. Better to wait than take a bad trade.
 
 🧠 DECISION PROCESS:
 0. Audit all open positions first: verify stops/targets and capital efficiency
@@ -118,7 +117,7 @@ class HybridDeepSeekClient:
 - Look for HIGH-QUALITY setups aggressively, not just any trade
 - Small accounts need SMART trades to grow - bad trades kill accounts faster
 - When `force_trade` is true, find the BEST available setup, not the first one
-- With <$20 balance: Use 15-25% risk ONLY on A+ setups with clear edge
+- With <$20 balance: Use 15-20% risk ONLY on A+ setups with strong confluence
 - Required for entry: Clear trend, momentum alignment, risk/reward > 1.5:1
 - Manage existing trades proactively: bump stops, trail profits, close losers quickly, and recycle capital into better opportunities
 - Success = Taking CALCULATED risks with technical edge, not gambling
@@ -495,8 +494,8 @@ class DeepSeekClient:
         self.temperature = temperature
         self.max_retries = max_retries
         self.consecutive_waits: int = 0
-        # Force an actionable trade immediately - no WAITs allowed for tiny balances
-        self.max_consecutive_waits: int = 0
+        # Allow 2 WAITs before escalating to forced trade - smart opportunity detection
+        self.max_consecutive_waits: int = 2
         
         # Note: OpenAI client is now created per-request in _call_deepseek()
         # to support new openai>=1.0.0 API

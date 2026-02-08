@@ -17,6 +17,7 @@ class TrailingStop:
     highest_price: float  # For longs
     lowest_price: float   # For shorts
     entry_price: float
+    entry_atr: float = 0.0  # ATR at entry for dynamic adjustments
     activated: bool = False
 
 
@@ -35,6 +36,7 @@ class SmartExecutionManager:
         symbol: str,
         position_size: float,
         tp_levels: List[Dict[str, Any]],
+        side: str = "Buy",  # NEW: Track position side for correct trigger direction
     ):
         """
         Setup partial take profit levels
@@ -43,6 +45,7 @@ class SmartExecutionManager:
             symbol: Trading symbol
             position_size: Total position size
             tp_levels: List of {"price": float, "percentage": float}
+            side: "Buy" (long) or "Sell" (short) - determines trigger direction
         
         Example:
             tp_levels = [
@@ -60,10 +63,11 @@ class SmartExecutionManager:
                 "amount": amount,
                 "percentage": level["percentage"],
                 "executed": False,
+                "side": side,  # Store side for direction-aware triggering
             })
             remaining -= amount
         
-        logger.info(f"Partial TPs set for {symbol}: {len(tp_levels)} levels")
+        logger.info(f"Partial TPs set for {symbol}: {len(tp_levels)} levels ({side})")
     
     def setup_trailing_stop(
         self,
@@ -73,6 +77,7 @@ class SmartExecutionManager:
         trail_distance_pct: float,
         current_price: float,
         entry_price: float,
+        entry_atr: float = 0.0,  # NEW: Store ATR at entry for dynamic adjustments
     ):
         """
         Setup trailing stop for a position
@@ -84,6 +89,7 @@ class SmartExecutionManager:
             trail_distance_pct: Trail distance as percentage
             current_price: Current market price
             entry_price: Position entry price (used to respect exchange stop-loss rules)
+            entry_atr: ATR value at time of entry (for dynamic trail adjustments)
         """
         self.trailing_stops[symbol] = TrailingStop(
             symbol=symbol,
@@ -93,10 +99,11 @@ class SmartExecutionManager:
             highest_price=current_price if side == "Buy" else 0,
             lowest_price=current_price if side == "Sell" else float('inf'),
             entry_price=entry_price,
+            entry_atr=entry_atr,
             activated=False,
         )
         
-        logger.info(f"Trailing stop set for {symbol}: {trail_distance_pct}% trail")
+        logger.info(f"Trailing stop set for {symbol}: {trail_distance_pct}% trail (ATR=${entry_atr:.2f})")
     
     def update_trailing_stop(
         self,
@@ -209,12 +216,18 @@ class SmartExecutionManager:
             if target["executed"]:
                 continue
             
-            # Check if price hit target
-            if current_price >= target["price"]:
+            # Direction-aware trigger: longs rise to target, shorts fall to target
+            target_side = target.get("side", "Buy")
+            if target_side == "Buy":
+                triggered = current_price >= target["price"]
+            else:  # Sell/Short
+                triggered = current_price <= target["price"]
+            
+            if triggered:
                 target["executed"] = True
                 
                 logger.info(
-                    f"{symbol} partial profit triggered: "
+                    f"{symbol} partial profit triggered ({target_side}): "
                     f"Take {target['percentage']}% at ${target['price']}"
                 )
                 

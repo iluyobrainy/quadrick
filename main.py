@@ -20,6 +20,10 @@ from config.settings import Settings
 from src.exchange.bybit_client import BybitClient
 from src.analysis.market_analyzer import MarketAnalyzer
 from src.analysis.order_flow import OrderFlowAnalyzer
+from src.analysis.opportunity_scorer import OpportunityScorer  # Hybrid: Pre-LLM scoring
+from src.analysis.counter_trend_validator import CounterTrendValidator  # Hybrid: Counter-trend gate
+from src.analysis.funding_analyzer import FundingAnalyzer  # Hybrid: Crowded trade detection
+from src.config.symbol_config import get_symbol_config, get_trail_distance, get_adjusted_risk, get_min_rr_ratio
 from src.llm.deepseek_client import DeepSeekClient, DecisionType, TradingDecision
 from src.risk.risk_manager import RiskManager
 from src.notifications.telegram_notifier import TelegramNotifier
@@ -126,6 +130,22 @@ class QuadrickTradingBot:
         # Initialize Emergency Controls
         self.emergency_controls = EmergencyControls()
         logger.info("✓ Emergency controls enabled")
+        
+        # Initialize Hybrid LLM+Algo Components
+        self.opportunity_scorer = OpportunityScorer(
+            min_volume_ratio=1.3,
+            min_score_threshold=65,  # Only feed high-quality setups to LLM
+        )
+        self.counter_trend_validator = CounterTrendValidator(
+            adx_threshold=15.0,  # Only allow counter-trend when ADX < 15
+            min_rr_ratio=2.0,    # Require 2:1 R:R for counter-trend
+            min_score_to_allow=70,
+        )
+        self.funding_analyzer = FundingAnalyzer(
+            extreme_threshold=0.0005,  # 0.05% funding = extreme
+            crowded_reduction=0.6,     # Reduce position to 60% (40% reduction)
+        )
+        logger.info("✓ Hybrid LLM+Algo system enabled (OpportunityScorer, CounterTrendValidator, FundingAnalyzer)")
         
 
 
@@ -388,12 +408,28 @@ class QuadrickTradingBot:
                 
                 all_decisions = []
                 
-                # Rank watchlist by current 15m relative volume to find "alive" coins first
-                ranked_watchlist = sorted(
-                    self.watchlist,
-                    key=lambda s: analysis.get(s, {}).get("timeframe_analysis", {}).get("15m", {}).get("volume_ratio", 0),
-                    reverse=True
+                # =========================================
+                # OPPORTUNITY SCORING (HYBRID ALGO PRE-FILTER)
+                # =========================================
+                # Use OpportunityScorer to intelligently filter before LLM
+                opportunities = self.opportunity_scorer.get_top_opportunities(
+                    analysis, 
+                    min_score=60,  # Allow 60+ scores through (65+ are high quality)
+                    max_results=5
                 )
+                
+                if opportunities:
+                    ranked_watchlist = [opp.symbol for opp in opportunities]
+                    scores_str = ", ".join([f"{o.symbol}({o.score})" for o in opportunities])
+                    logger.info(f"📊 OpportunityScorer: Top {len(opportunities)} setups: {scores_str}")
+                else:
+                    # Fallback: rank by volume if no high-scoring opportunities
+                    ranked_watchlist = sorted(
+                        self.watchlist,
+                        key=lambda s: analysis.get(s, {}).get("timeframe_analysis", {}).get("15m", {}).get("volume_ratio", 0),
+                        reverse=True
+                    )[:5]  # Limit to 5 for efficiency
+                    logger.info(f"📊 No high-scoring opportunities, using volume fallback: {ranked_watchlist}")
                 
                 # Iterate through ranked watchlist to find opportunities
                 for symbol in ranked_watchlist:
@@ -1032,6 +1068,107 @@ class QuadrickTradingBot:
         risk_pct = validation.adjusted_risk_pct or decision.risk_pct
         leverage = validation.adjusted_leverage or decision.leverage
         
+        # =========================================
+        # COUNTER-TREND VALIDATION (HYBRID ALGO GATE)
+        # =========================================
+        symbol_analysis = analysis.get(decision.symbol, {})
+        tf_1h = symbol_analysis.get("timeframe_analysis", {}).get("1h", {})
+        trend_1h = tf_1h.get("trend", "neutral")
+        
+        # Check if this is a counter-trend trade
+        is_counter_trend = self.counter_trend_validator.detect_counter_trend(decision.side, trend_1h)
+        
+        if is_counter_trend:
+            # Run algorithmic validation for counter-trend trades
+            ct_validation = self.counter_trend_validator.validate(
+                symbol=decision.symbol,
+                analysis=symbol_analysis,
+                proposed_side=decision.side,
+                proposed_sl=decision.stop_loss,
+                proposed_tp=decision.take_profit_1,
+            )
+            
+            if not ct_validation.allowed:
+                logger.warning(
+                    f"🚫 Counter-trend trade BLOCKED by algorithm: {decision.symbol} {decision.side} "
+                    f"(score={ct_validation.score}/70). Reasons: {ct_validation.reasons}"
+                )
+                return
+            else:
+                logger.info(
+                    f"✅ Counter-trend trade ALLOWED: {decision.symbol} {decision.side} "
+                    f"(score={ct_validation.score}). Requirements: {ct_validation.requirements_met}"
+                )
+        
+        # =========================================
+        # SL/TP DIRECTION + R:R VALIDATION (HYBRID ALGO)
+        # =========================================
+        entry_for_validation = current_price
+        sl = decision.stop_loss
+        tp = decision.take_profit_1
+        
+        # Validate and auto-correct SL/TP direction
+        if decision.side == "Buy":  # Long position
+            if sl >= entry_for_validation:
+                corrected_sl = entry_for_validation * 0.99  # 1% below entry
+                logger.warning(f"Invalid long SL ({sl:.2f}) >= entry ({entry_for_validation:.2f}). Auto-corrected to {corrected_sl:.2f}")
+                sl = corrected_sl
+            if tp <= entry_for_validation:
+                corrected_tp = entry_for_validation * 1.015  # 1.5% above entry
+                logger.warning(f"Invalid long TP ({tp:.2f}) <= entry ({entry_for_validation:.2f}). Auto-corrected to {corrected_tp:.2f}")
+                tp = corrected_tp
+        else:  # Short position (Sell)
+            if sl <= entry_for_validation:
+                corrected_sl = entry_for_validation * 1.01  # 1% above entry
+                logger.warning(f"Invalid short SL ({sl:.2f}) <= entry ({entry_for_validation:.2f}). Auto-corrected to {corrected_sl:.2f}")
+                sl = corrected_sl
+            if tp >= entry_for_validation:
+                corrected_tp = entry_for_validation * 0.985  # 1.5% below entry
+                logger.warning(f"Invalid short TP ({tp:.2f}) >= entry ({entry_for_validation:.2f}). Auto-corrected to {corrected_tp:.2f}")
+                tp = corrected_tp
+        
+        # Enforce minimum R:R ratio (SYMBOL-SPECIFIC)
+        risk_distance = abs(entry_for_validation - sl)
+        reward_distance = abs(tp - entry_for_validation)
+        rr_ratio = reward_distance / risk_distance if risk_distance > 0 else 0
+        
+        MIN_RR_RATIO = get_min_rr_ratio(decision.symbol)  # Symbol-specific!
+        if rr_ratio < MIN_RR_RATIO:
+            logger.warning(f"R:R too low ({rr_ratio:.2f}). Adjusting TP for minimum {MIN_RR_RATIO}:1")
+            if decision.side == "Buy":
+                tp = entry_for_validation + (risk_distance * MIN_RR_RATIO)
+            else:
+                tp = entry_for_validation - (risk_distance * MIN_RR_RATIO)
+            rr_ratio = MIN_RR_RATIO
+        
+        # Update decision with validated values
+        decision.stop_loss = sl
+        decision.take_profit_1 = tp
+        
+        logger.info(f"Validated SL/TP: SL=${sl:.2f}, TP=${tp:.2f}, R:R={rr_ratio:.2f}:1")
+        
+        # =========================================
+        # SYMBOL-SPECIFIC RISK CAP (HYBRID ALGO)
+        # =========================================
+        symbol_config = get_symbol_config(decision.symbol)
+        max_risk_for_symbol = get_adjusted_risk(decision.symbol, risk_pct)
+        if risk_pct > max_risk_for_symbol:
+            logger.info(f"📊 Risk capped for {decision.symbol} ({symbol_config.vol_class} vol): {risk_pct:.1f}% → {max_risk_for_symbol:.1f}%")
+            risk_pct = max_risk_for_symbol
+        
+        # =========================================
+        # FUNDING RATE CHECK (CROWDED TRADE DETECTION)
+        # =========================================
+        funding_rate = market_data.get("funding_rates", {}).get(decision.symbol, 0)
+        funding_analysis = self.funding_analyzer.analyze(decision.symbol, decision.side, funding_rate)
+        
+        position_multiplier = 1.0  # Default full size
+        if funding_analysis.is_crowded:
+            position_multiplier = funding_analysis.position_multiplier
+            logger.warning(f"⚠️ {funding_analysis.reason} → Position reduced to {position_multiplier*100:.0f}%")
+        elif funding_analysis.is_contrarian:
+            logger.info(f"📈 {funding_analysis.reason}")
+        
         # Calculate position size - CRITICAL FOR SMALL ACCOUNTS
         # For $15 balance, we need very small positions
         
@@ -1068,6 +1205,12 @@ class QuadrickTradingBot:
         
         # Round to appropriate decimal places using Bybit rules
         position_size = self.bybit.round_quantity(decision.symbol, position_size)
+        
+        # Apply crowded trade reduction from funding analysis
+        if position_multiplier < 1.0:
+            original_size = position_size
+            position_size = self.bybit.round_quantity(decision.symbol, position_size * position_multiplier)
+            logger.info(f"📉 Position reduced for crowded funding: {original_size:.4f} → {position_size:.4f}")
         
         # Absolute minimum notional check (Bybit requires 5 USDT min for most pairs)
         # We set a buffer of 5.5 USDT to be safe.
@@ -1196,14 +1339,31 @@ class QuadrickTradingBot:
 
             # Setup smart execution features
             if decision.take_profit_1:
-                # Setup trailing stop
+                # Calculate ATR-based trailing stop distance (SYMBOL-SPECIFIC)
+                symbol_analysis = analysis.get(decision.symbol, {})
+                tf_15m = symbol_analysis.get("timeframe_analysis", {}).get("15m", {})
+                atr = tf_15m.get("atr")
+                
+                # Fallback if ATR not available
+                if atr is None or atr <= 0:
+                    atr = current_price * 0.005  # 0.5% fallback
+                    logger.warning(f"ATR not available for {decision.symbol}, using 0.5% fallback (${atr:.2f})")
+                
+                # Use symbol-specific trailing distance (accounts for volatility class)
+                trail_distance_pct = get_trail_distance(decision.symbol, atr, current_price)
+                atr_pct = (atr / current_price) * 100
+                
+                logger.info(f"ATR-based trailing ({symbol_config.vol_class} vol): ATR=${atr:.2f} ({atr_pct:.2f}%), trail={trail_distance_pct:.2f}%")
+                
+                # Setup trailing stop with dynamic distance and store entry ATR
                 self.execution_manager.setup_trailing_stop(
                     symbol=decision.symbol,
                     side=decision.side,
                     initial_stop=adjusted_stop_loss,  # Use adjusted SL
-                    trail_distance_pct=0.5,
+                    trail_distance_pct=trail_distance_pct,  # Dynamic ATR-based!
                     current_price=current_price,
                     entry_price=current_price,
+                    entry_atr=atr,  # Store for future dynamic adjustments
                 )
 
                 # Setup partial profit targets (only if we have a take profit)
@@ -1218,8 +1378,9 @@ class QuadrickTradingBot:
                             symbol=decision.symbol,
                             position_size=position_size,
                             tp_levels=tp_levels,
+                            side=decision.side,  # Pass side for direction-aware triggering
                         )
-                        logger.debug(f"Partial take profits set for {decision.symbol}")
+                        logger.debug(f"Partial take profits set for {decision.symbol} ({decision.side})")
                     except Exception as tp_error:
                         logger.warning(f"Failed to setup partial take profits: {tp_error}")
                 else:

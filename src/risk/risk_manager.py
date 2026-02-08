@@ -30,8 +30,8 @@ class RiskManager:
     def __init__(
         self,
         min_risk_pct: float = 10.0,
-        max_risk_pct: float = 30.0,
-        max_daily_drawdown_pct: float = 30.0,
+        max_risk_pct: float = 20.0,  # Lowered from 30% for scalping
+        max_daily_drawdown_pct: float = 15.0,  # Tighter for scalping (was 30%)
         max_leverage: int = 50,
         max_concurrent_positions: int = 3,
         min_account_balance: float = 3.0,
