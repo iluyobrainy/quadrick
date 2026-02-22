@@ -1367,6 +1367,7 @@ class QuadrickTradingBot:
                         "tracked_buckets": len(getattr(self.quant_engine.symbol_policy, "buckets", {}) or {}),
                         "states": policy_state_counts,
                     },
+                    "symbol_funnel": metrics.symbol_funnel or {},
                     "reject_reason_counts": metrics.reject_reason_counts or {},
                     "retrained": metrics.retrained,
                     "top_proposals": [
@@ -1486,6 +1487,7 @@ class QuadrickTradingBot:
                     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                     "affordability_passed": metrics.affordability_passed,
                     "selected": len(affordable_proposals),
+                    "symbol_funnel": metrics.symbol_funnel or {},
                 }
             )
         except Exception:
@@ -2506,6 +2508,9 @@ class QuadrickTradingBot:
             small_account_mode = (
                 effective_account_balance <= float(self.settings.trading.small_account_balance_threshold)
             )
+            prefilter_enabled = bool(
+                small_account_mode and getattr(self.settings.trading, "small_account_prefilter_enabled", False)
+            )
             runtime_watchlist: List[str] = []
             for symbol in self.watchlist:
                 cooldown_until = self.symbol_cooldowns.get(symbol)
@@ -2527,8 +2532,9 @@ class QuadrickTradingBot:
                     logger.warning(f"Skipping {symbol}: {e}")
                     continue  # Skip this symbol and continue with others
 
-                # Small accounts should focus on symbols that are executable with current margin budget.
-                if small_account_mode:
+                # Small-account prefilter is optional.
+                # Disabled by default so symbols are analyzed first, then filtered at execution time.
+                if prefilter_enabled:
                     is_affordable, reason, required_margin, max_margin = self._check_symbol_affordability(
                         symbol=symbol,
                         market_price=float(getattr(ticker, "last_price", 0.0) or 0.0),
@@ -2548,6 +2554,21 @@ class QuadrickTradingBot:
                         if not soft_mode:
                             self.symbol_cooldowns[symbol] = now_utc + timedelta(minutes=20)
                         continue
+                elif small_account_mode:
+                    # Keep visibility when a symbol is likely unaffordable, but do not skip it.
+                    is_affordable, reason, required_margin, max_margin = self._check_symbol_affordability(
+                        symbol=symbol,
+                        market_price=float(getattr(ticker, "last_price", 0.0) or 0.0),
+                        leverage_hint=min(4, int(self.default_leverage)),
+                    )
+                    if not is_affordable:
+                        notice_until = self._affordability_notice_until.get(symbol)
+                        if not notice_until or now_utc >= notice_until:
+                            logger.info(
+                                f"Small-account prefilter disabled; keeping {symbol} in analysis "
+                                f"(min margin ${required_margin:.2f} > cap ${max_margin:.2f}; {reason})"
+                            )
+                            self._affordability_notice_until[symbol] = now_utc + timedelta(minutes=20)
 
                 runtime_watchlist.append(symbol)
                 

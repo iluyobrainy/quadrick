@@ -70,6 +70,7 @@ class QuantCycleMetrics:
     governor_mode: str = "neutral"
     governor_reason: str = ""
     governor_snapshot: Optional[Dict[str, Any]] = None
+    symbol_funnel: Optional[Dict[str, Dict[str, Any]]] = None
     reject_reason_counts: Optional[Dict[str, int]] = None
     monitor_alerts: Optional[list[dict]] = None
     retrained: bool = False

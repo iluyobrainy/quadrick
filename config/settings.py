@@ -78,6 +78,10 @@ class TradingSettings(BaseSettings):
     max_leverage: int = Field(10, ge=1, le=100)
     max_concurrent_positions: int = Field(2, ge=1, le=10)
     min_account_balance: float = Field(3.0, gt=0)
+    small_account_prefilter_enabled: bool = Field(
+        False,
+        description="If true, skip symbols early when min executable margin is above budget",
+    )
     decision_interval_seconds: int = Field(60, ge=30)
     min_rr_ratio: float = Field(1.5, ge=1.0, le=5.0)
     small_account_balance_threshold: float = Field(150.0, gt=0)
@@ -159,6 +163,17 @@ class TradingSettings(BaseSettings):
     symbol_policy_red_probe_interval_minutes: int = Field(30, ge=1, le=1440)
     symbol_policy_red_probe_risk_mult: float = Field(0.5, ge=0.05, le=1.0)
     symbol_policy_drift_flip_threshold_pct: float = Field(0.35, ge=0.0, le=10.0)
+    symbol_diversity_enabled: bool = Field(True)
+    symbol_diversity_lookback_minutes: int = Field(240, ge=30, le=10080)
+    symbol_diversity_max_share_pct: float = Field(45.0, ge=5.0, le=100.0)
+    symbol_diversity_repeat_penalty_scale: float = Field(0.35, ge=0.0, le=5.0)
+    symbol_diversity_underused_bonus: float = Field(0.12, ge=0.0, le=5.0)
+    symbol_diversity_underused_min_closed_trades: int = Field(1, ge=0, le=200)
+    major_symbol_boost_enabled: bool = Field(True)
+    major_symbols_csv: str = Field("BTCUSDT,ETHUSDT")
+    major_symbol_target_share_pct: float = Field(30.0, ge=0.0, le=100.0)
+    major_symbol_bonus: float = Field(0.10, ge=0.0, le=5.0)
+    major_symbol_min_quality: int = Field(42, ge=1, le=100)
     counter_trend_strict_mode: bool = Field(False)
     counter_trend_disable_soft_overrides: bool = Field(True)
     counter_trend_bypass_min_score: int = Field(85, ge=1, le=100)

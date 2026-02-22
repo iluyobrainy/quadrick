@@ -556,6 +556,33 @@ class QuantDataLake:
             "win_rate": float(win_rate),
         }
 
+    def get_recent_close_symbol_counts(
+        self,
+        minutes: int = 240,
+        since_ts: Optional[Any] = None,
+    ) -> Dict[str, int]:
+        cutoff = _iso(_utc_now() - timedelta(minutes=max(15, int(minutes))))
+        cutoff = _merge_cutoff(cutoff, since_ts)
+        cur = self.conn.execute(
+            """
+            SELECT symbol, COUNT(*) AS n
+            FROM execution_events
+            WHERE ts >= ?
+              AND event_type = 'close'
+              AND symbol IS NOT NULL
+              AND TRIM(symbol) <> ''
+            GROUP BY symbol
+            """,
+            (cutoff,),
+        )
+        out: Dict[str, int] = {}
+        for row in cur.fetchall():
+            symbol = str(row["symbol"] or "").strip().upper()
+            if not symbol:
+                continue
+            out[symbol] = int(row["n"] or 0)
+        return out
+
     def get_recent_symbol_regimes(self, symbol: str, limit: int = 12) -> List[str]:
         cur = self.conn.execute(
             """

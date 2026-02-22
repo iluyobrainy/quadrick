@@ -99,6 +99,14 @@ class QuantEngine:
         self._last_alert_at: Dict[str, datetime] = {}
         self._session_started_at = _utc_now()
         self._session_scope_metrics = bool(getattr(self.settings.trading, "quant_session_scope_metrics", True))
+        raw_major_symbols = str(
+            getattr(self.settings.trading, "major_symbols_csv", "BTCUSDT,ETHUSDT") or ""
+        )
+        self._major_symbols = {
+            token.strip().upper()
+            for token in raw_major_symbols.split(",")
+            if token.strip()
+        } or {"BTCUSDT", "ETHUSDT"}
         self._load_state()
         logger.info("Quant engine initialized (primary quant decision path)")
 
@@ -264,6 +272,88 @@ class QuantEngine:
             return 0.85
         return 1.0
 
+    def _apply_symbol_diversity_ranking(
+        self,
+        ranked: List[EVProposal],
+        now_utc: datetime,
+        since_ts: Optional[Any] = None,
+    ) -> List[EVProposal]:
+        if not ranked:
+            return ranked
+        if not bool(getattr(self.settings.trading, "symbol_diversity_enabled", True)):
+            return ranked
+
+        lookback_minutes = int(max(30, int(self.settings.trading.symbol_diversity_lookback_minutes)))
+        close_counts = self.data_lake.get_recent_close_symbol_counts(
+            minutes=lookback_minutes,
+            since_ts=since_ts,
+        )
+        total_closes = float(sum(close_counts.values()))
+        max_share = max(0.01, min(1.0, float(self.settings.trading.symbol_diversity_max_share_pct) / 100.0))
+        repeat_penalty_scale = max(0.0, float(self.settings.trading.symbol_diversity_repeat_penalty_scale))
+        underused_bonus = max(0.0, float(self.settings.trading.symbol_diversity_underused_bonus))
+        underused_min_closed = int(max(0, int(self.settings.trading.symbol_diversity_underused_min_closed_trades)))
+
+        major_boost_enabled = bool(getattr(self.settings.trading, "major_symbol_boost_enabled", True))
+        major_target = max(0.0, min(1.0, float(self.settings.trading.major_symbol_target_share_pct) / 100.0))
+        major_bonus = max(0.0, float(self.settings.trading.major_symbol_bonus))
+        major_min_quality = int(max(1, int(self.settings.trading.major_symbol_min_quality)))
+        major_closed = float(sum(close_counts.get(symbol, 0) for symbol in self._major_symbols))
+        major_share = (major_closed / total_closes) if total_closes > 0 else 0.0
+        major_share_deficit = max(0.0, major_target - major_share)
+
+        rescored: List[Tuple[float, EVProposal]] = []
+        for proposal in ranked:
+            symbol = str(proposal.symbol or "").upper()
+            base_score = _f(
+                (proposal.metadata or {}).get("portfolio_objective_score"),
+                proposal.expectancy_per_hour_pct,
+            )
+
+            symbol_closed = float(close_counts.get(symbol, 0))
+            symbol_share = (symbol_closed / total_closes) if total_closes > 0 else 0.0
+            over_share = max(0.0, symbol_share - max_share)
+            repeat_penalty = over_share * repeat_penalty_scale * 2.0
+
+            coverage_bonus = 0.0
+            if symbol_closed <= float(underused_min_closed):
+                scarcity = 1.0
+                if total_closes > 0 and max_share > 0:
+                    scarcity = max(0.0, min(1.0, 1.0 - (symbol_share / max_share)))
+                coverage_bonus = underused_bonus * max(0.25, scarcity)
+
+            major_symbol_bonus = 0.0
+            quality_adj = _f(getattr(proposal, "quality_score_adjusted", proposal.quality_score), proposal.quality_score)
+            if (
+                major_boost_enabled
+                and symbol in self._major_symbols
+                and quality_adj >= float(major_min_quality)
+            ):
+                base_major_boost = major_bonus * max(0.0, min(1.0, major_share_deficit / max(0.01, major_target or 1.0)))
+                if total_closes > 0 and symbol_closed == 0:
+                    base_major_boost += (major_bonus * 0.35)
+                major_symbol_bonus = base_major_boost
+
+            final_score = base_score + coverage_bonus + major_symbol_bonus - repeat_penalty
+            proposal.metadata["symbol_diversity"] = {
+                "enabled": True,
+                "lookback_minutes": lookback_minutes,
+                "symbol_closed_trades": symbol_closed,
+                "total_closed_trades": total_closes,
+                "symbol_share": symbol_share,
+                "max_share": max_share,
+                "repeat_penalty": repeat_penalty,
+                "coverage_bonus": coverage_bonus,
+                "major_symbol_bonus": major_symbol_bonus,
+                "major_share": major_share,
+                "major_target_share": major_target,
+            }
+            proposal.metadata["portfolio_objective_score_diversified"] = final_score
+            rescored.append((final_score, proposal))
+
+        rescored.sort(key=lambda item: item[0], reverse=True)
+        return [proposal for _, proposal in rescored]
+
     def _is_chop_regime(self, features: Dict[str, float], regime: str) -> bool:
         if not bool(getattr(self.settings.trading, "anti_chop_enabled", True)):
             return False
@@ -361,6 +451,24 @@ class QuantEngine:
         proposals: List[EVProposal] = []
         metrics = QuantCycleMetrics()
         reject_reason_counts: Dict[str, int] = {}
+        symbol_funnel: Dict[str, Dict[str, int]] = {}
+
+        def _funnel_bump(symbol: str, stage: str, inc: int = 1) -> None:
+            sym = str(symbol or "").strip().upper()
+            if not sym:
+                return
+            row = symbol_funnel.setdefault(
+                sym,
+                {
+                    "seen": 0,
+                    "proposed": 0,
+                    "quality_passed": 0,
+                    "uncertainty_passed": 0,
+                    "portfolio_passed": 0,
+                    "selected": 0,
+                },
+            )
+            row[stage] = int(row.get(stage, 0)) + int(max(0, inc))
         objective_metrics = self.data_lake.get_recent_expectancy_metrics(
             minutes=120,
             since_ts=session_since,
@@ -414,6 +522,7 @@ class QuantEngine:
             if ticker is None:
                 continue
             metrics.candidates_scored += 1
+            _funnel_bump(symbol, "seen")
             price = _f(getattr(ticker, "last_price", 0.0), 0.0)
             if price <= 0:
                 continue
@@ -548,6 +657,7 @@ class QuantEngine:
                 )
                 reject_reason_counts[constructor_reason] = reject_reason_counts.get(constructor_reason, 0) + 1
                 continue
+            _funnel_bump(symbol, "proposed")
 
             sample_strength_avg = (
                 sum(horizon_sample_strength.values()) / max(1, len(horizon_sample_strength))
@@ -611,6 +721,8 @@ class QuantEngine:
             if proposal.expected_edge_pct < dynamic_edge_floor_for_proposal:
                 reject_reason_counts["edge_below_floor"] = reject_reason_counts.get("edge_below_floor", 0) + 1
                 continue
+
+            _funnel_bump(symbol, "quality_passed")
 
             metrics.proposals_generated += 1
 
@@ -884,6 +996,7 @@ class QuantEngine:
                     reject_reason_counts["uncertainty_gate"] = reject_reason_counts.get("uncertainty_gate", 0) + 1
                     continue
             metrics.uncertainty_passed += 1
+            _funnel_bump(symbol, "uncertainty_passed")
 
             if proposal.entry_tier == "probe":
                 probe_fills_last_hour = self.data_lake.count_execution_events(
@@ -940,6 +1053,15 @@ class QuantEngine:
             portfolio_max_margin_pct=float(self.settings.trading.portfolio_max_margin_pct),
             allow_probe_override=True,
         )
+        ranked = self._apply_symbol_diversity_ranking(
+            ranked=ranked,
+            now_utc=now_utc,
+            since_ts=session_since,
+        )
+        for proposal in ranked:
+            _funnel_bump(proposal.symbol, "portfolio_passed")
+        if ranked:
+            _funnel_bump(ranked[0].symbol, "selected")
         metrics.portfolio_passed = len(ranked)
         metrics.proposals_accepted = len(ranked)
         metrics.selected = len(ranked)
@@ -961,6 +1083,7 @@ class QuantEngine:
         for key, value in recent_reject_reasons.items():
             merged_reject_counts[f"recent_{key}"] = int(value)
         metrics.reject_reason_counts = merged_reject_counts
+        metrics.symbol_funnel = symbol_funnel
         metrics.cycle_latency_ms = (time.perf_counter() - start) * 1000.0
         policy_state_counts: Dict[str, int] = {}
         for p in proposals:
@@ -1132,6 +1255,7 @@ class QuantEngine:
                 "governor_snapshot": metrics.governor_snapshot or {},
                 "expectancy_floor_guard": dict(expectancy_guard),
                 "symbol_policy_summary": bucket_summary,
+                "symbol_funnel": metrics.symbol_funnel or {},
                 "reject_reason_counts": metrics.reject_reason_counts or {},
                 "drift_score": metrics.drift_score,
                 "recent_reject_rate": metrics.recent_reject_rate,
