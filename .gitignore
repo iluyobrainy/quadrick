@@ -45,6 +45,12 @@ backtest/
 # Process files
 bot.pid
 *.pid
+bot_state.json
+api_status.json
+last_balance.txt
+
+# Supabase backups
+database/backups/
 
 # Jupyter
 .ipynb_checkpoints/

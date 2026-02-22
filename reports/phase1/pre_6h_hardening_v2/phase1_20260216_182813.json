@@ -1,0 +1,275 @@
+{
+  "phase": "phase1_paper_assessment",
+  "run_window": {
+    "started_at_utc": "2026-02-16T18:16:21.792487+00:00",
+    "finished_at_utc": "2026-02-16T18:28:13.522860+00:00",
+    "duration_minutes_target": 10,
+    "duration_minutes_actual": 11.862,
+    "poll_seconds": 15
+  },
+  "mode": {
+    "bybit_testnet": true,
+    "allow_live_trading": false,
+    "start_equity_for_projection": 100.0
+  },
+  "run_stats": {
+    "initialized": true,
+    "fatal_error": null,
+    "runtime_error_count": 0,
+    "runtime_errors": [],
+    "runtime_notes": [],
+    "forced_task_cancelled": false,
+    "snapshots_collected": 22,
+    "positions_after_cleanup": 0,
+    "closed_trades": 2
+  },
+  "metrics": {
+    "closed_trades": 2,
+    "wins": 0,
+    "losses": 2,
+    "win_rate_pct": 0.0,
+    "expectancy_pct_per_trade": -4.122072,
+    "avg_win_pct": 0.0,
+    "avg_loss_pct": -4.122072,
+    "gross_profit_pct": 0,
+    "gross_loss_pct": -8.244145,
+    "profit_factor": 0.0,
+    "max_drawdown_pct_on_100": 8.074557,
+    "end_equity_100": 91.925443,
+    "total_return_pct_on_100": -8.074557,
+    "net_pnl_on_100": -8.074557,
+    "trades_per_hour": 10.11619,
+    "projected_7d_trade_count": 1699,
+    "projected_30d_trade_count": 7283,
+    "projection_7d_100": {
+      "p10": 100.0,
+      "p50": 100.0,
+      "p90": 100.0
+    },
+    "projection_30d_100": {
+      "p10": 100.0,
+      "p50": 100.0,
+      "p90": 100.0
+    }
+  },
+  "grades": {
+    "engineering_grade": 100.0,
+    "engineering_notes": [
+      "No major runtime reliability issues observed."
+    ],
+    "quant_grade": 10.4,
+    "quant_notes": [
+      "Grade capped at 60 due to small sample (<10 closed trades).",
+      "Non-positive expectancy observed.",
+      "Profit factor below 1.0 indicates weak edge."
+    ]
+  },
+  "trades": [
+    {
+      "symbol": "ADAUSDT",
+      "pnl": -3.9413172804532577,
+      "strategy_tag": "AutonomousAI",
+      "win": false,
+      "timestamp": "2026-02-16 18:22:28.968609+00:00"
+    },
+    {
+      "symbol": "ADAUSDT",
+      "pnl": -4.302827712243169,
+      "strategy_tag": "AutonomousAI",
+      "win": false,
+      "timestamp": "2026-02-16 18:28:13.509615+00:00"
+    }
+  ],
+  "equity_curve_100": [
+    {
+      "trade_index": 0,
+      "equity": 100.0
+    },
+    {
+      "trade_index": 1,
+      "equity": 96.058683
+    },
+    {
+      "trade_index": 2,
+      "equity": 91.925443
+    }
+  ],
+  "snapshots": [
+    {
+      "timestamp_utc": "2026-02-16T18:17:36.346567+00:00",
+      "account_balance": 67771.85147129,
+      "available_balance": 60929.89274142,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:17:51.344589+00:00",
+      "account_balance": 67771.85147129,
+      "available_balance": 60929.89274142,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:18:06.358096+00:00",
+      "account_balance": 67771.85147129,
+      "available_balance": 60929.89274142,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:18:21.359585+00:00",
+      "account_balance": 67771.85147129,
+      "available_balance": 60929.89274142,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:18:36.369958+00:00",
+      "account_balance": 67771.85147129,
+      "available_balance": 60929.89274142,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:18:51.383713+00:00",
+      "account_balance": 67771.85147129,
+      "available_balance": 60929.89274142,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:20:17.156351+00:00",
+      "account_balance": 67772.33664421,
+      "available_balance": 60930.32868423,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:20:32.171022+00:00",
+      "account_balance": 67772.33664421,
+      "available_balance": 60930.32868423,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:20:47.363615+00:00",
+      "account_balance": 67772.33664421,
+      "available_balance": 60930.32868423,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:21:03.285990+00:00",
+      "account_balance": 67786.00700878,
+      "available_balance": 60925.08529396,
+      "open_positions": 1,
+      "closed_trades": 0,
+      "tracked_trades": 1
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:21:18.300721+00:00",
+      "account_balance": 67786.00700878,
+      "available_balance": 60925.08529396,
+      "open_positions": 1,
+      "closed_trades": 0,
+      "tracked_trades": 1
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:21:33.312760+00:00",
+      "account_balance": 67786.00700878,
+      "available_balance": 60925.08529396,
+      "open_positions": 1,
+      "closed_trades": 0,
+      "tracked_trades": 1
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:21:48.317135+00:00",
+      "account_balance": 67786.00700878,
+      "available_balance": 60925.08529396,
+      "open_positions": 1,
+      "closed_trades": 0,
+      "tracked_trades": 1
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:22:03.295483+00:00",
+      "account_balance": 67786.00700878,
+      "available_balance": 60925.08529396,
+      "open_positions": 1,
+      "closed_trades": 0,
+      "tracked_trades": 1
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:23:33.937990+00:00",
+      "account_balance": 67827.17939833,
+      "available_balance": 60979.00077797,
+      "open_positions": 0,
+      "closed_trades": 1,
+      "tracked_trades": 1
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:23:48.950009+00:00",
+      "account_balance": 67827.17939833,
+      "available_balance": 60979.00077797,
+      "open_positions": 0,
+      "closed_trades": 1,
+      "tracked_trades": 1
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:24:06.679388+00:00",
+      "account_balance": 67827.17939833,
+      "available_balance": 60979.00077797,
+      "open_positions": 1,
+      "closed_trades": 1,
+      "tracked_trades": 2
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:24:21.698102+00:00",
+      "account_balance": 67792.79443997,
+      "available_balance": 60911.52948563,
+      "open_positions": 1,
+      "closed_trades": 1,
+      "tracked_trades": 2
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:24:36.702993+00:00",
+      "account_balance": 67792.79443997,
+      "available_balance": 60911.52948563,
+      "open_positions": 1,
+      "closed_trades": 1,
+      "tracked_trades": 2
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:24:51.717446+00:00",
+      "account_balance": 67792.79443997,
+      "available_balance": 60911.52948563,
+      "open_positions": 1,
+      "closed_trades": 1,
+      "tracked_trades": 2
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:25:06.731126+00:00",
+      "account_balance": 67792.79443997,
+      "available_balance": 60911.52948563,
+      "open_positions": 1,
+      "closed_trades": 1,
+      "tracked_trades": 2
+    },
+    {
+      "timestamp_utc": "2026-02-16T18:26:44.220106+00:00",
+      "account_balance": 67815.74409201,
+      "available_balance": 60932.18804982,
+      "open_positions": 1,
+      "closed_trades": 1,
+      "tracked_trades": 2
+    }
+  ]
+}

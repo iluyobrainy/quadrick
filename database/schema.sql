@@ -1,494 +1,316 @@
--- ================================================
--- QUADRICK AI TRADING SYSTEM - SUPABASE SCHEMA
--- ================================================
--- This file contains all table definitions for the trading system
--- Run this in your Supabase SQL Editor to create the database
+-- Migration 004: Full trading-schema reset (canonical Railway backend model)
+-- WARNING: This migration drops legacy Quadrick trading tables.
+-- Run database/backup_supabase.py before applying this migration in production.
 
--- ================================================
--- 1. TRADES TABLE - Record all trading activity
--- ================================================
-CREATE TABLE IF NOT EXISTS trades (
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Drop old objects first (views/functions/tables)
+DROP FUNCTION IF EXISTS match_trade_memories(vector, double precision, integer);
+DROP FUNCTION IF EXISTS match_trade_memories(vector(4), double precision, integer);
+DROP FUNCTION IF EXISTS match_trade_memories(vector(8), double precision, integer);
+DROP FUNCTION IF EXISTS match_trade_memories(vector(8), float, int);
+
+DROP VIEW IF EXISTS v_recent_trades;
+
+DROP TABLE IF EXISTS alerts CASCADE;
+DROP TABLE IF EXISTS performance_metrics CASCADE;
+DROP TABLE IF EXISTS market_data CASCADE;
+DROP TABLE IF EXISTS account_snapshots CASCADE;
+DROP TABLE IF EXISTS positions CASCADE;
+DROP TABLE IF EXISTS trades CASCADE;
+DROP TABLE IF EXISTS decisions CASCADE;
+DROP TABLE IF EXISTS trade_memories CASCADE;
+DROP TABLE IF EXISTS active_contexts CASCADE;
+DROP TABLE IF EXISTS strategy_learning CASCADE;
+DROP TABLE IF EXISTS bot_status CASCADE;
+DROP TABLE IF EXISTS active_positions CASCADE;
+DROP TABLE IF EXISTS system_logs CASCADE;
+
+-- Canonical tables used by current runtime
+CREATE TABLE trades (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    trade_id VARCHAR(100) UNIQUE NOT NULL,
+    trade_id TEXT UNIQUE NOT NULL,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Trade Details
-    symbol VARCHAR(50) NOT NULL,
-    side VARCHAR(10) NOT NULL, -- Buy/Sell
-    order_type VARCHAR(20) NOT NULL, -- Market/Limit
-    category VARCHAR(20) NOT NULL DEFAULT 'linear',
-    
-    -- Position Info
-    size DECIMAL(20, 8) NOT NULL,
-    entry_price DECIMAL(20, 2) NOT NULL,
-    exit_price DECIMAL(20, 2),
-    stop_loss DECIMAL(20, 2),
-    take_profit DECIMAL(20, 2),
-    
-    -- Risk & Leverage
-    leverage INTEGER NOT NULL,
-    risk_pct DECIMAL(5, 2) NOT NULL,
-    position_value DECIMAL(20, 2) NOT NULL,
-    margin_used DECIMAL(20, 2),
-    
-    -- P&L
-    realized_pnl DECIMAL(20, 2),
-    realized_pnl_pct DECIMAL(10, 4),
-    fees DECIMAL(20, 4),
-    
-    -- Trade Management
-    status VARCHAR(20) NOT NULL DEFAULT 'open', -- open, closed, cancelled
-    opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    order_type TEXT NOT NULL DEFAULT 'Market',
+    category TEXT NOT NULL DEFAULT 'linear',
+    size NUMERIC(24, 8),
+    entry_price NUMERIC(24, 8),
+    exit_price NUMERIC(24, 8),
+    stop_loss NUMERIC(24, 8),
+    take_profit NUMERIC(24, 8),
+    leverage INTEGER,
+    risk_pct NUMERIC(10, 4),
+    position_value NUMERIC(24, 8),
+    margin_used NUMERIC(24, 8),
+    realized_pnl NUMERIC(24, 8),
+    realized_pnl_pct NUMERIC(12, 6),
+    fees NUMERIC(24, 8),
+    status TEXT NOT NULL DEFAULT 'open',
+    opened_at TIMESTAMPTZ DEFAULT NOW(),
     closed_at TIMESTAMPTZ,
     duration_minutes INTEGER,
-    
-    -- Strategy & Decision
-    strategy_tag VARCHAR(100),
-    ai_confidence DECIMAL(5, 4),
+    strategy_tag TEXT,
+    entry_tier TEXT,
+    policy_state TEXT,
+    policy_key TEXT,
+    ai_confidence NUMERIC(10, 6),
     ai_reasoning TEXT,
-    decision_id UUID,
-    
-    -- Account State
-    balance_before DECIMAL(20, 2),
-    balance_after DECIMAL(20, 2),
-    
-    -- Exchange Info
-    exchange_order_id VARCHAR(100),
+    decision_id TEXT,
+    balance_before NUMERIC(24, 8),
+    balance_after NUMERIC(24, 8),
+    exchange_order_id TEXT,
     exchange_response JSONB,
-    
-    -- Metadata
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Create indexes for trades
+CREATE TABLE decisions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    decision_id TEXT UNIQUE NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    decision_type TEXT NOT NULL,
+    account_balance NUMERIC(24, 8) DEFAULT 0,
+    open_positions INTEGER DEFAULT 0,
+    daily_pnl NUMERIC(24, 8),
+    current_milestone TEXT,
+    symbol TEXT,
+    side TEXT,
+    risk_pct NUMERIC(10, 4),
+    leverage INTEGER,
+    entry_price_target NUMERIC(24, 8),
+    stop_loss NUMERIC(24, 8),
+    take_profit_1 NUMERIC(24, 8),
+    take_profit_2 NUMERIC(24, 8),
+    strategy_tag TEXT,
+    confidence_score NUMERIC(10, 6),
+    reasoning JSONB,
+    risk_management JSONB,
+    market_context JSONB,
+    executed BOOLEAN DEFAULT FALSE,
+    execution_result TEXT,
+    rejection_reason TEXT,
+    model_version TEXT,
+    processing_time_ms INTEGER,
+    error_message TEXT,
+    error_traceback TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE trade_memories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    symbol TEXT NOT NULL,
+    strategy TEXT,
+    pnl_pct FLOAT,
+    win BOOLEAN,
+    market_context_json JSONB,
+    market_vector VECTOR(8),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE active_contexts (
+    symbol TEXT PRIMARY KEY,
+    context JSONB NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE strategy_learning (
+    id TEXT PRIMARY KEY,
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE bot_status (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    mode TEXT NOT NULL DEFAULT 'initialized',
+    trading_allowed BOOLEAN NOT NULL DEFAULT FALSE,
+    pause_reason TEXT,
+    consecutive_losses INTEGER NOT NULL DEFAULT 0,
+    cooldown_active BOOLEAN NOT NULL DEFAULT FALSE,
+    cooldown_until TIMESTAMPTZ,
+    total_balance NUMERIC(24, 8) NOT NULL DEFAULT 0,
+    available_balance NUMERIC(24, 8) NOT NULL DEFAULT 0,
+    unrealized_pnl NUMERIC(24, 8) NOT NULL DEFAULT 0,
+    daily_pnl NUMERIC(24, 8) NOT NULL DEFAULT 0,
+    daily_pnl_pct NUMERIC(12, 6) NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE active_positions (
+    symbol TEXT PRIMARY KEY,
+    side TEXT NOT NULL,
+    size NUMERIC(24, 8) NOT NULL DEFAULT 0,
+    entry_price NUMERIC(24, 8) NOT NULL DEFAULT 0,
+    current_price NUMERIC(24, 8),
+    mark_price NUMERIC(24, 8),
+    pnl NUMERIC(24, 8),
+    pnl_pct NUMERIC(12, 6),
+    unrealized_pnl NUMERIC(24, 8),
+    leverage NUMERIC(10, 2),
+    stop_loss NUMERIC(24, 8),
+    take_profit NUMERIC(24, 8),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE system_logs (
+    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    level TEXT NOT NULL,
+    message TEXT NOT NULL,
+    module TEXT,
+    function TEXT
+);
+
+-- Indexes
 CREATE INDEX idx_trades_timestamp ON trades(timestamp DESC);
 CREATE INDEX idx_trades_symbol ON trades(symbol);
 CREATE INDEX idx_trades_status ON trades(status);
 CREATE INDEX idx_trades_strategy ON trades(strategy_tag);
-CREATE INDEX idx_trades_decision_id ON trades(decision_id);
 
--- ================================================
--- 2. DECISIONS TABLE - Record all AI decisions
--- ================================================
-CREATE TABLE IF NOT EXISTS decisions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    decision_id VARCHAR(100) UNIQUE NOT NULL,
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Decision Type
-    decision_type VARCHAR(50) NOT NULL, -- open_position, close_position, hold, wait
-    
-    -- Context Summary
-    account_balance DECIMAL(20, 2) NOT NULL,
-    open_positions INTEGER NOT NULL,
-    daily_pnl DECIMAL(20, 2),
-    current_milestone VARCHAR(50),
-    
-    -- Decision Details (if trading)
-    symbol VARCHAR(50),
-    side VARCHAR(10),
-    risk_pct DECIMAL(5, 2),
-    leverage INTEGER,
-    entry_price_target DECIMAL(20, 2),
-    stop_loss DECIMAL(20, 2),
-    take_profit_1 DECIMAL(20, 2),
-    take_profit_2 DECIMAL(20, 2),
-    
-    -- AI Analysis
-    strategy_tag VARCHAR(100),
-    confidence_score DECIMAL(5, 4),
-    reasoning JSONB,
-    risk_management JSONB,
-    market_context JSONB,
-    
-    -- Execution
-    executed BOOLEAN DEFAULT false,
-    execution_result VARCHAR(50), -- success, rejected, failed
-    rejection_reason TEXT,
-    
-    -- Performance Tracking
-    model_version VARCHAR(50),
-    processing_time_ms INTEGER,
-    
-    -- Metadata
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Create indexes for decisions
 CREATE INDEX idx_decisions_timestamp ON decisions(timestamp DESC);
+CREATE INDEX idx_decisions_symbol ON decisions(symbol);
 CREATE INDEX idx_decisions_type ON decisions(decision_type);
 CREATE INDEX idx_decisions_executed ON decisions(executed);
-CREATE INDEX idx_decisions_symbol ON decisions(symbol);
 
--- ================================================
--- 3. POSITIONS TABLE - Track open positions
--- ================================================
-CREATE TABLE IF NOT EXISTS positions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    position_id VARCHAR(100) UNIQUE NOT NULL,
-    
-    -- Position Details
-    symbol VARCHAR(50) NOT NULL,
-    side VARCHAR(10) NOT NULL,
-    size DECIMAL(20, 8) NOT NULL,
-    entry_price DECIMAL(20, 2) NOT NULL,
-    current_price DECIMAL(20, 2),
-    mark_price DECIMAL(20, 2),
-    
-    -- Risk Management
-    leverage INTEGER NOT NULL,
-    stop_loss DECIMAL(20, 2),
-    take_profit DECIMAL(20, 2),
-    liquidation_price DECIMAL(20, 2),
-    
-    -- P&L
-    unrealized_pnl DECIMAL(20, 2),
-    unrealized_pnl_pct DECIMAL(10, 4),
-    realized_pnl DECIMAL(20, 2),
-    
-    -- Status
-    status VARCHAR(20) NOT NULL DEFAULT 'open',
-    opened_at TIMESTAMPTZ NOT NULL,
-    last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Links
-    trade_id UUID REFERENCES trades(id),
-    decision_id UUID REFERENCES decisions(id),
-    
-    -- Metadata
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+CREATE INDEX idx_trade_memories_vector ON trade_memories
+USING ivfflat (market_vector vector_cosine_ops)
+WITH (lists = 100);
+CREATE INDEX idx_trade_memories_symbol ON trade_memories(symbol);
+CREATE INDEX idx_trade_memories_strategy ON trade_memories(strategy);
+CREATE INDEX idx_trade_memories_win ON trade_memories(win);
+CREATE INDEX idx_trade_memories_timestamp ON trade_memories(timestamp DESC);
 
--- Create indexes for positions
-CREATE INDEX idx_positions_symbol ON positions(symbol);
-CREATE INDEX idx_positions_status ON positions(status);
-CREATE INDEX idx_positions_opened_at ON positions(opened_at DESC);
-
--- ================================================
--- 4. ACCOUNT_SNAPSHOTS TABLE - Track account over time
--- ================================================
-CREATE TABLE IF NOT EXISTS account_snapshots (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Balance Info
-    total_equity DECIMAL(20, 2) NOT NULL,
-    available_balance DECIMAL(20, 2) NOT NULL,
-    used_margin DECIMAL(20, 2) NOT NULL,
-    unrealized_pnl DECIMAL(20, 2) NOT NULL,
-    realized_pnl DECIMAL(20, 2) NOT NULL,
-    
-    -- Performance Metrics
-    daily_pnl DECIMAL(20, 2),
-    daily_pnl_pct DECIMAL(10, 4),
-    total_pnl DECIMAL(20, 2),
-    total_pnl_pct DECIMAL(10, 4),
-    
-    -- Trading Stats
-    open_positions INTEGER NOT NULL DEFAULT 0,
-    total_trades_today INTEGER NOT NULL DEFAULT 0,
-    win_rate_today DECIMAL(5, 2),
-    
-    -- Milestone Progress
-    current_milestone VARCHAR(50),
-    milestone_progress_pct DECIMAL(5, 2),
-    
-    -- Risk Metrics
-    current_drawdown_pct DECIMAL(5, 2),
-    max_drawdown_today_pct DECIMAL(5, 2),
-    
-    -- Metadata
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Create indexes for account snapshots
-CREATE INDEX idx_snapshots_timestamp ON account_snapshots(timestamp DESC);
-
--- ================================================
--- 5. MARKET_DATA TABLE - Store analyzed market data
--- ================================================
-CREATE TABLE IF NOT EXISTS market_data (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Symbol Info
-    symbol VARCHAR(50) NOT NULL,
-    timeframe VARCHAR(10) NOT NULL,
-    
-    -- Price Data
-    open DECIMAL(20, 2) NOT NULL,
-    high DECIMAL(20, 2) NOT NULL,
-    low DECIMAL(20, 2) NOT NULL,
-    close DECIMAL(20, 2) NOT NULL,
-    volume DECIMAL(30, 8) NOT NULL,
-    
-    -- Technical Indicators
-    rsi DECIMAL(5, 2),
-    macd DECIMAL(20, 8),
-    macd_signal DECIMAL(20, 8),
-    atr DECIMAL(20, 2),
-    bb_upper DECIMAL(20, 2),
-    bb_lower DECIMAL(20, 2),
-    
-    -- Analysis Results
-    trend VARCHAR(20),
-    market_regime VARCHAR(50),
-    patterns JSONB,
-    
-    -- Metadata
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Create indexes for market data
-CREATE INDEX idx_market_data_symbol_time ON market_data(symbol, timestamp DESC);
-CREATE INDEX idx_market_data_timeframe ON market_data(timeframe);
-
--- ================================================
--- 6. PERFORMANCE_METRICS TABLE - Daily/Weekly/Monthly stats
--- ================================================
-CREATE TABLE IF NOT EXISTS performance_metrics (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    period_type VARCHAR(20) NOT NULL, -- daily, weekly, monthly
-    period_start TIMESTAMPTZ NOT NULL,
-    period_end TIMESTAMPTZ NOT NULL,
-    
-    -- Trading Stats
-    total_trades INTEGER NOT NULL,
-    winning_trades INTEGER NOT NULL,
-    losing_trades INTEGER NOT NULL,
-    win_rate DECIMAL(5, 2) NOT NULL,
-    
-    -- P&L
-    total_pnl DECIMAL(20, 2) NOT NULL,
-    total_pnl_pct DECIMAL(10, 4) NOT NULL,
-    avg_win DECIMAL(20, 2),
-    avg_loss DECIMAL(20, 2),
-    largest_win DECIMAL(20, 2),
-    largest_loss DECIMAL(20, 2),
-    
-    -- Risk Metrics
-    max_drawdown DECIMAL(5, 2),
-    sharpe_ratio DECIMAL(10, 4),
-    profit_factor DECIMAL(10, 4),
-    
-    -- Strategy Performance
-    best_strategy VARCHAR(100),
-    best_strategy_pnl DECIMAL(20, 2),
-    worst_strategy VARCHAR(100),
-    worst_strategy_pnl DECIMAL(20, 2),
-    
-    -- Account Growth
-    starting_balance DECIMAL(20, 2) NOT NULL,
-    ending_balance DECIMAL(20, 2) NOT NULL,
-    balance_change_pct DECIMAL(10, 4) NOT NULL,
-    
-    -- Metadata
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Create indexes for performance metrics
-CREATE INDEX idx_performance_period ON performance_metrics(period_type, period_start DESC);
-
--- ================================================
--- 7. ALERTS TABLE - System alerts and notifications
--- ================================================
-CREATE TABLE IF NOT EXISTS alerts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Alert Details
-    alert_type VARCHAR(50) NOT NULL, -- trade, milestone, warning, error
-    severity VARCHAR(20) NOT NULL, -- info, warning, critical
-    title VARCHAR(200) NOT NULL,
-    message TEXT NOT NULL,
-    
-    -- Context
-    symbol VARCHAR(50),
-    trade_id UUID REFERENCES trades(id),
-    decision_id UUID REFERENCES decisions(id),
-    
-    -- Notification Status
-    sent_telegram BOOLEAN DEFAULT false,
-    sent_email BOOLEAN DEFAULT false,
-    sent_discord BOOLEAN DEFAULT false,
-    
-    -- Metadata
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Create indexes for alerts
-CREATE INDEX idx_alerts_timestamp ON alerts(timestamp DESC);
-CREATE INDEX idx_alerts_type ON alerts(alert_type);
-CREATE INDEX idx_alerts_severity ON alerts(severity);
-
--- ================================================
--- 8. SYSTEM_LOGS TABLE - System events and errors
--- ================================================
-CREATE TABLE IF NOT EXISTS system_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Log Details
-    log_level VARCHAR(20) NOT NULL, -- DEBUG, INFO, WARNING, ERROR, CRITICAL
-    module VARCHAR(100) NOT NULL,
-    function VARCHAR(100),
-    message TEXT NOT NULL,
-    
-    -- Error Details (if applicable)
-    error_type VARCHAR(100),
-    error_traceback TEXT,
-    
-    -- Context
-    context JSONB,
-    
-    -- Metadata
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Create indexes for system logs
 CREATE INDEX idx_system_logs_timestamp ON system_logs(timestamp DESC);
-CREATE INDEX idx_system_logs_level ON system_logs(log_level);
-CREATE INDEX idx_system_logs_module ON system_logs(module);
+CREATE INDEX idx_system_logs_level ON system_logs(level);
 
--- ================================================
--- FUNCTIONS AND TRIGGERS
--- ================================================
+-- RAG similarity RPC (8D vectors)
+CREATE OR REPLACE FUNCTION match_trade_memories(
+    query_embedding VECTOR(8),
+    match_threshold FLOAT DEFAULT 0.7,
+    match_count INT DEFAULT 5
+)
+RETURNS TABLE (
+    id UUID,
+    symbol TEXT,
+    strategy TEXT,
+    pnl_pct FLOAT,
+    win BOOLEAN,
+    similarity FLOAT,
+    market_context_json JSONB
+)
+LANGUAGE SQL
+STABLE
+AS $$
+    SELECT
+        tm.id,
+        tm.symbol,
+        tm.strategy,
+        tm.pnl_pct,
+        tm.win,
+        1 - (tm.market_vector <=> query_embedding) AS similarity,
+        tm.market_context_json
+    FROM trade_memories tm
+    WHERE 1 - (tm.market_vector <=> query_embedding) > match_threshold
+    ORDER BY tm.market_vector <=> query_embedding
+    LIMIT match_count;
+$$;
 
--- Function to update updated_at timestamp
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+-- RLS + policies (service role full access, authenticated read on dashboard tables)
+DO $$
+DECLARE
+    t TEXT;
 BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ language 'plpgsql';
+    FOREACH t IN ARRAY ARRAY[
+        'trades',
+        'decisions',
+        'trade_memories',
+        'active_contexts',
+        'strategy_learning',
+        'bot_status',
+        'active_positions',
+        'system_logs'
+    ]
+    LOOP
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+        EXECUTE format('DROP POLICY IF EXISTS service_role_all ON %I', t);
+        EXECUTE format(
+            'CREATE POLICY service_role_all ON %I FOR ALL USING (auth.role() = ''service_role'') WITH CHECK (auth.role() = ''service_role'')',
+            t
+        );
+    END LOOP;
 
--- Apply updated_at trigger to tables
-CREATE TRIGGER update_trades_updated_at BEFORE UPDATE ON trades
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    FOREACH t IN ARRAY ARRAY[
+        'bot_status',
+        'active_positions',
+        'system_logs',
+        'decisions',
+        'trades'
+    ]
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS authenticated_read ON %I', t);
+        EXECUTE format(
+            'CREATE POLICY authenticated_read ON %I FOR SELECT USING (auth.role() IN (''authenticated'', ''service_role''))',
+            t
+        );
+    END LOOP;
+END $$;
 
-CREATE TRIGGER update_positions_updated_at BEFORE UPDATE ON positions
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+GRANT EXECUTE ON FUNCTION match_trade_memories(VECTOR(8), FLOAT, INT) TO authenticated;
+GRANT EXECUTE ON FUNCTION match_trade_memories(VECTOR(8), FLOAT, INT) TO service_role;
 
--- ================================================
--- VIEWS FOR EASY QUERYING
--- ================================================
 
--- View: Recent trades with P&L
-CREATE OR REPLACE VIEW v_recent_trades AS
-SELECT 
-    t.trade_id,
-    t.timestamp,
-    t.symbol,
-    t.side,
-    t.size,
-    t.entry_price,
-    t.exit_price,
-    t.realized_pnl,
-    t.realized_pnl_pct,
-    t.strategy_tag,
-    t.status,
-    t.duration_minutes
-FROM trades t
-ORDER BY t.timestamp DESC
-LIMIT 100;
 
--- View: Current open positions
-CREATE OR REPLACE VIEW v_open_positions AS
-SELECT 
-    p.symbol,
-    p.side,
-    p.size,
-    p.entry_price,
-    p.current_price,
-    p.unrealized_pnl,
-    p.unrealized_pnl_pct,
-    p.stop_loss,
-    p.take_profit,
-    p.opened_at,
-    EXTRACT(EPOCH FROM (NOW() - p.opened_at))/60 as minutes_open
-FROM positions p
-WHERE p.status = 'open'
-ORDER BY p.opened_at DESC;
+-- Migration 005: Seed baseline state after full reset
 
--- View: Daily performance summary
-CREATE OR REPLACE VIEW v_daily_performance AS
-SELECT 
-    DATE(timestamp) as trade_date,
-    COUNT(*) as total_trades,
-    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
-    SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losing_trades,
-    ROUND(SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::NUMERIC / COUNT(*)::NUMERIC * 100, 2) as win_rate,
-    SUM(realized_pnl) as total_pnl,
-    MAX(realized_pnl) as best_trade,
-    MIN(realized_pnl) as worst_trade,
-    AVG(realized_pnl) as avg_pnl
-FROM trades
-WHERE status = 'closed'
-GROUP BY DATE(timestamp)
-ORDER BY trade_date DESC;
+INSERT INTO bot_status (
+    id,
+    mode,
+    trading_allowed,
+    pause_reason,
+    consecutive_losses,
+    cooldown_active,
+    cooldown_until,
+    total_balance,
+    available_balance,
+    unrealized_pnl,
+    daily_pnl,
+    daily_pnl_pct,
+    updated_at
+)
+VALUES (
+    1,
+    'initialized',
+    FALSE,
+    NULL,
+    0,
+    FALSE,
+    NULL,
+    0,
+    0,
+    0,
+    0,
+    0,
+    NOW()
+)
+ON CONFLICT (id) DO UPDATE SET
+    mode = EXCLUDED.mode,
+    trading_allowed = EXCLUDED.trading_allowed,
+    pause_reason = EXCLUDED.pause_reason,
+    consecutive_losses = EXCLUDED.consecutive_losses,
+    cooldown_active = EXCLUDED.cooldown_active,
+    cooldown_until = EXCLUDED.cooldown_until,
+    total_balance = EXCLUDED.total_balance,
+    available_balance = EXCLUDED.available_balance,
+    unrealized_pnl = EXCLUDED.unrealized_pnl,
+    daily_pnl = EXCLUDED.daily_pnl,
+    daily_pnl_pct = EXCLUDED.daily_pnl_pct,
+    updated_at = EXCLUDED.updated_at;
 
--- View: Strategy performance
-CREATE OR REPLACE VIEW v_strategy_performance AS
-SELECT 
-    strategy_tag,
-    COUNT(*) as total_trades,
-    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-    SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-    ROUND(SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::NUMERIC / COUNT(*)::NUMERIC * 100, 2) as win_rate,
-    SUM(realized_pnl) as total_pnl,
-    AVG(realized_pnl) as avg_pnl,
-    MAX(realized_pnl) as best_trade,
-    MIN(realized_pnl) as worst_trade
-FROM trades
-WHERE status = 'closed' AND strategy_tag IS NOT NULL
-GROUP BY strategy_tag
-ORDER BY total_pnl DESC;
+INSERT INTO strategy_learning (id, data, updated_at)
+VALUES ('global_stats', '{}'::jsonb, NOW())
+ON CONFLICT (id) DO NOTHING;
 
--- ================================================
--- ROW LEVEL SECURITY (Optional - for multi-user)
--- ================================================
 
--- Enable RLS on all tables
-ALTER TABLE trades ENABLE ROW LEVEL SECURITY;
-ALTER TABLE decisions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE positions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE account_snapshots ENABLE ROW LEVEL SECURITY;
-ALTER TABLE market_data ENABLE ROW LEVEL SECURITY;
-ALTER TABLE performance_metrics ENABLE ROW LEVEL SECURITY;
-ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE system_logs ENABLE ROW LEVEL SECURITY;
-
--- Create policies to allow service role full access
-CREATE POLICY "Service role can do everything" ON trades
-    FOR ALL USING (true);
-
-CREATE POLICY "Service role can do everything" ON decisions
-    FOR ALL USING (true);
-
-CREATE POLICY "Service role can do everything" ON positions
-    FOR ALL USING (true);
-
-CREATE POLICY "Service role can do everything" ON account_snapshots
-    FOR ALL USING (true);
-
-CREATE POLICY "Service role can do everything" ON market_data
-    FOR ALL USING (true);
-
-CREATE POLICY "Service role can do everything" ON performance_metrics
-    FOR ALL USING (true);
-
-CREATE POLICY "Service role can do everything" ON alerts
-    FOR ALL USING (true);
-
-CREATE POLICY "Service role can do everything" ON system_logs
-    FOR ALL USING (true);
-
--- ================================================
--- SETUP COMPLETE!
--- ================================================
--- All tables, indexes, triggers, and views have been created.
--- Your Quadrick AI Trading System database is ready!
--- ================================================

@@ -9,6 +9,7 @@ the LLM's attention on high-probability setups rather than noise.
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,17 @@ class OpportunityScorer:
         self.rsi_overbought = rsi_overbought
         self.bb_squeeze_threshold = bb_squeeze_threshold
         self.min_score_threshold = min_score_threshold
+
+    @staticmethod
+    def _as_float(value: Any, default: float) -> float:
+        """Coerce values to finite floats to avoid None/NaN propagation."""
+        try:
+            out = float(value)
+            if not math.isfinite(out):
+                return default
+            return out
+        except (TypeError, ValueError):
+            return default
     
     def score_symbol(self, symbol: str, analysis: Dict[str, Any]) -> OpportunityScore:
         """
@@ -74,16 +86,27 @@ class OpportunityScorer:
         tf_1h = analysis.get("timeframe_analysis", {}).get("1h", {})
         
         # Core indicators
-        rsi = tf_15m.get("rsi", 50)
-        macd_signal = tf_15m.get("macd_signal", "neutral")
-        volume_ratio = tf_15m.get("volume_ratio", 1.0)
-        bb_width = tf_15m.get("bb_width", 0.03)
-        trend_1h = tf_1h.get("trend", "neutral")
-        adx = tf_15m.get("adx", 25)  # For counter-trend detection
+        rsi = self._as_float(tf_15m.get("rsi", 50), 50.0)
+        macd_signal = str(tf_15m.get("macd_signal", "neutral") or "neutral").lower()
+        volume_ratio = self._as_float(tf_15m.get("volume_ratio", 1.0), 1.0)
+        bb_width = self._as_float(tf_15m.get("bb_width", 0.03), 0.03)
+        trend_raw = str(tf_1h.get("trend", "neutral") or "neutral").lower()
+        trend_map = {
+            "uptrend": "trending_up",
+            "bullish": "trending_up",
+            "trending_up": "trending_up",
+            "up": "trending_up",
+            "downtrend": "trending_down",
+            "bearish": "trending_down",
+            "trending_down": "trending_down",
+            "down": "trending_down",
+        }
+        trend_1h = trend_map.get(trend_raw, "neutral")
+        adx = self._as_float(tf_15m.get("adx", 25), 25.0)  # For counter-trend detection
         
         # Get price info for SL/TP calculation
-        current_price = analysis.get("current_price", 0)
-        atr = tf_15m.get("atr", current_price * 0.005)
+        current_price = self._as_float(analysis.get("current_price", 0), 0.0)
+        atr = self._as_float(tf_15m.get("atr", current_price * 0.005), current_price * 0.005 if current_price > 0 else 0.0)
         
         # ==========================================
         # SCORING LOGIC

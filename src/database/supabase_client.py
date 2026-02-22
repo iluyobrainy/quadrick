@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from loguru import logger
@@ -25,12 +26,35 @@ class SupabaseClient:
         if not self.enabled or not self.client:
             return
 
+        payload = dict(trade_data or {})
+        dropped_columns: List[str] = []
         try:
-            # Run in executor to avoid blocking
-            await asyncio.to_thread(
-                lambda: self.client.table("trades").insert(trade_data).execute()
-            )
-            logger.debug(f"Trade {trade_data.get('trade_id')} saved to Supabase")
+            # Run in executor to avoid blocking. If the table is missing newer
+            # columns, progressively drop only the missing keys and retry.
+            for _ in range(10):
+                try:
+                    await asyncio.to_thread(
+                        lambda p=dict(payload): self.client.table("trades").insert(p).execute()
+                    )
+                    if dropped_columns:
+                        logger.warning(
+                            f"Trade save fallback applied for {trade_data.get('trade_id')}: "
+                            f"dropped unsupported columns {sorted(set(dropped_columns))}"
+                        )
+                    logger.debug(f"Trade {trade_data.get('trade_id')} saved to Supabase")
+                    return
+                except Exception as insert_error:
+                    message = str(insert_error)
+                    missing = re.search(r"Could not find the '([^']+)' column", message)
+                    if not missing:
+                        raise
+                    missing_column = str(missing.group(1) or "").strip()
+                    if not missing_column or missing_column not in payload:
+                        raise
+                    payload.pop(missing_column, None)
+                    dropped_columns.append(missing_column)
+
+            raise RuntimeError("Supabase trade insert retries exceeded after schema fallback attempts")
         except Exception as e:
             logger.error(f"Failed to save trade to Supabase: {e}")
 

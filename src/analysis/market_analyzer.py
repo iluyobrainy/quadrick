@@ -387,7 +387,16 @@ class MarketAnalyzer:
         # Volume SMA
         df_copy['volume_sma'] = ta.sma(df_copy['volume'], length=20)
         volume_sma = df_copy['volume_sma'].values
-        volume_ratio = volume / volume_sma if len(volume_sma) > 0 else np.ones_like(volume)
+        if len(volume_sma) > 0:
+            valid_denominator = np.isfinite(volume_sma) & (volume_sma != 0)
+            volume_ratio = np.divide(
+                volume,
+                volume_sma,
+                out=np.ones_like(volume, dtype=float),
+                where=valid_denominator,
+            )
+        else:
+            volume_ratio = np.ones_like(volume, dtype=float)
         
         # EMAs
         df_copy['ema_9'] = ta.ema(df_copy['close'], length=9)
@@ -638,7 +647,15 @@ class MarketAnalyzer:
             volume_trend = "stable"
         
         # Breakout potential
-        price_position = (close[-1] - indicators.bb_lower) / (indicators.bb_upper - indicators.bb_lower)
+        bb_range = indicators.bb_upper - indicators.bb_lower
+        if abs(bb_range) < 1e-12:
+            price_position = 0.5
+        else:
+            price_position = (close[-1] - indicators.bb_lower) / bb_range
+            if not np.isfinite(price_position):
+                price_position = 0.5
+            else:
+                price_position = float(np.clip(price_position, 0.0, 1.0))
         if price_position > 0.8 or price_position < 0.2:
             if indicators.volume_ratio > 1.5:
                 breakout_potential = 80.0

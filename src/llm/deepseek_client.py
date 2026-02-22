@@ -3,6 +3,7 @@ DeepSeek LLM Client - Unleashed Autonomous Trading
 """
 import json
 import asyncio
+import os
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 import aiohttp
@@ -80,8 +81,8 @@ class HybridDeepSeekClient:
 
 ⚙️ TRADING CONSTRAINTS:
 - SCALPING MODE: 2-5 minute holds, quick profits, tight exits
-- Risk per trade: 10-20% (choose dynamically: 10% for uncertain setups, 15% for good setups, 20% for A+ confluence)
-- Maximum leverage: 50x (use responsibly)
+- Risk per trade: ALWAYS stay within the provided allowed range in `system_state.allowed_risk_range_pct`
+- Maximum leverage: keep leverage conservative and aligned with account size (small accounts should generally remain <=5x)
 - Always set appropriate stop losses
 - QUALITY > QUANTITY: Only trade when you have 70%+ confidence from technical confluence
 - DIRECTIONAL NEUTRALITY: Evaluate both long AND short setups every decision. Futures allow you to profit in either direction—never default to "Buy".
@@ -117,7 +118,7 @@ class HybridDeepSeekClient:
 - Look for HIGH-QUALITY setups aggressively, not just any trade
 - Small accounts need SMART trades to grow - bad trades kill accounts faster
 - When `force_trade` is true, find the BEST available setup, not the first one
-- With <$20 balance: Use 15-20% risk ONLY on A+ setups with strong confluence
+- With small balances: prioritize survival first (micro-risk, clean entries, strict stop discipline)
 - Required for entry: Clear trend, momentum alignment, risk/reward > 1.5:1
 - Manage existing trades proactively: bump stops, trail profits, close losers quickly, and recycle capital into better opportunities
 - Success = Taking CALCULATED risks with technical edge, not gambling
@@ -494,8 +495,11 @@ class DeepSeekClient:
         self.temperature = temperature
         self.max_retries = max_retries
         self.consecutive_waits: int = 0
-        # Allow 2 WAITs before escalating to forced trade - smart opportunity detection
-        self.max_consecutive_waits: int = 2
+        # Keep forced-trade escalation conservative to reduce churn in weak regimes.
+        try:
+            self.max_consecutive_waits = max(2, int(os.getenv("MAX_CONSECUTIVE_WAITS", "6")))
+        except (TypeError, ValueError):
+            self.max_consecutive_waits = 6
         
         # Note: OpenAI client is now created per-request in _call_deepseek()
         # to support new openai>=1.0.0 API
@@ -572,7 +576,7 @@ class DeepSeekClient:
                         + " Choose a symbol from the available market data (e.g., " + symbols_hint + ")."
                         + " Fill every required field: symbol, side ('Buy' or 'Sell'), order_type, risk_pct, leverage, entry_price_target, stop_loss, take_profit_1."
                         + " Return valid JSON that matches this schema exactly:"
-                        + " {\"decision_type\": \"open_position\", \"trade\": {\"symbol\": \"BTCUSDT\", \"side\": \"Buy\", \"order_type\": \"Market\", \"risk_pct\": 8.0, \"leverage\": 15, \"entry_price_target\": 35000.0, \"stop_loss\": 34300.0, \"take_profit_1\": 35800.0, \"take_profit_2\": 36500.0, \"expected_hold_duration_mins\": 45, \"strategy_tag\": \"momentum_reversal\", \"confidence_score\": 0.73 }}"
+                        + " {\"decision_type\": \"open_position\", \"trade\": {\"symbol\": \"BTCUSDT\", \"side\": \"Buy\", \"order_type\": \"Market\", \"risk_pct\": 3.0, \"leverage\": 5, \"entry_price_target\": 35000.0, \"stop_loss\": 34300.0, \"take_profit_1\": 35800.0, \"take_profit_2\": 36500.0, \"expected_hold_duration_mins\": 45, \"strategy_tag\": \"momentum_reversal\", \"confidence_score\": 0.73 }}"
                         + " Do not include any null values."
                     )
                     response = await self._call_deepseek(forced_prompt, timeout, system_prompt)
@@ -696,7 +700,7 @@ class DeepSeekClient:
             if isinstance(risk_range, (list, tuple)) and risk_range:
                 risk_pct = float((risk_range[0] + risk_range[-1]) / 2)
             else:
-                risk_pct = 8.0
+                risk_pct = 3.0
 
             decision = TradingDecision(
                 decision_id=str(uuid.uuid4()),
@@ -707,7 +711,7 @@ class DeepSeekClient:
                 side=side,
                 order_type="Market",
                 risk_pct=risk_pct,
-                leverage=10,
+                leverage=5,
                 entry_price_target=entry,
                 stop_loss=round(stop_loss, 6),
                 take_profit_1=round(take_profit_1, 6),
@@ -737,23 +741,41 @@ class DeepSeekClient:
             decision_type=decision_type,
         )
         
-        # Add trade details if opening position
-        if decision_type == DecisionType.OPEN_POSITION and "trade" in data:
-            trade = data["trade"]
+        # Add trade details if opening position.
+        # Accept both nested {"trade": {...}} and flat payloads for backward compatibility.
+        if decision_type == DecisionType.OPEN_POSITION:
+            trade = data.get("trade") if isinstance(data.get("trade"), dict) else data
+
+            def _to_float(value, default=0.0):
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return default
+
+            def _to_int(value, default=0):
+                try:
+                    return int(float(value))
+                except (TypeError, ValueError):
+                    return default
+
             decision.symbol = trade.get("symbol")
             decision.category = trade.get("category", "linear")
             decision.side = trade.get("side")
             decision.order_type = trade.get("order_type", "Market")
-            decision.risk_pct = float(trade.get("risk_pct", 15))
-            decision.leverage = int(trade.get("leverage", 10))
-            decision.entry_price_target = float(trade.get("entry_price_target", 0))
-            decision.stop_loss = float(trade.get("stop_loss", 0))
-            decision.take_profit_1 = float(trade.get("take_profit_1", 0))
-            decision.take_profit_2 = float(trade.get("take_profit_2", 0)) if trade.get("take_profit_2") else None
+            decision.risk_pct = _to_float(trade.get("risk_pct"), 3.0)
+            decision.leverage = _to_int(trade.get("leverage"), 5)
+            decision.entry_price_target = _to_float(trade.get("entry_price_target"), 0.0)
+            decision.stop_loss = _to_float(trade.get("stop_loss", trade.get("sl")), 0.0)
+            decision.take_profit_1 = _to_float(
+                trade.get("take_profit_1", trade.get("take_profit", trade.get("tp"))),
+                0.0,
+            )
+            tp2_value = trade.get("take_profit_2")
+            decision.take_profit_2 = _to_float(tp2_value) if tp2_value is not None else None
             decision.time_in_force = trade.get("time_in_force", "GTC")
             decision.expected_hold_duration_mins = trade.get("expected_hold_duration_mins")
             decision.strategy_tag = trade.get("strategy_tag")
-            decision.confidence_score = float(trade.get("confidence_score", 0.5))
+            decision.confidence_score = _to_float(trade.get("confidence_score"), 0.5)
 
         elif decision_type == DecisionType.MODIFY_POSITION:
             modification = data.get("modification") or data.get("trade") or data
@@ -827,7 +849,7 @@ class DeepSeekClient:
         market_data: Dict[str, Any],
         technical_analysis: Dict[str, Any],
         funding_rates: Dict[str, float],
-        top_movers: List[Dict[str, Any]],
+        top_movers: Dict[str, List[Dict[str, Any]]],
         milestone_progress: Dict[str, Any],
         recent_trades: List[Dict[str, Any]] = None,
         performance_feedback: Dict[str, Any] = None,
@@ -861,21 +883,21 @@ class DeepSeekClient:
             daily_pnl = sum(t.get("pnl", 0) for t in today_trades)
         
         # Determine risk mode
-        if account_balance >= 500:
+        if account_balance >= 1000:
             risk_mode = "maximum_aggressive"
-            allowed_risk_range = [22, 30]
-        elif account_balance >= 200:
+            allowed_risk_range = [3.5, 6.0]
+        elif account_balance >= 500:
             risk_mode = "moderate_aggressive"
-            allowed_risk_range = [18, 25]
-        elif account_balance >= 50:
+            allowed_risk_range = [3.0, 5.0]
+        elif account_balance >= 150:
             risk_mode = "moderate"
-            allowed_risk_range = [15, 22]
-        elif account_balance >= 20:
+            allowed_risk_range = [2.5, 4.0]
+        elif account_balance >= 50:
             risk_mode = "conservative"
-            allowed_risk_range = [8, 12]
+            allowed_risk_range = [2.0, 3.0]
         else:
             risk_mode = "capital_preservation"
-            allowed_risk_range = [6, 8]
+            allowed_risk_range = [1.5, 2.5]
         
         current_stage = None
         next_target_value = None
@@ -939,9 +961,9 @@ class DeepSeekClient:
             "system_state": {
                 "risk_mode": risk_mode,
                 "allowed_risk_range_pct": allowed_risk_range,
-                "max_concurrent_positions": 3,
+                "max_concurrent_positions": 2,
                 "trading_enabled": True,
-                "next_decision_window_seconds": 120,
+                "next_decision_window_seconds": 60,
             },
         }
         

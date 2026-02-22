@@ -40,6 +40,79 @@ class TradingCouncil:
             "ScalpingMomentum": ScalpingMomentumStrategy(),
         }
 
+    @staticmethod
+    def _as_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _normalize_trend(value: Any) -> str:
+        trend = str(value or "neutral").lower()
+        mapping = {
+            "uptrend": "uptrend",
+            "bullish": "uptrend",
+            "trending_up": "uptrend",
+            "up": "uptrend",
+            "downtrend": "downtrend",
+            "bearish": "downtrend",
+            "trending_down": "downtrend",
+            "down": "downtrend",
+            "neutral": "neutral",
+            "range_chop": "neutral",
+            "ranging": "neutral",
+            "sideways": "neutral",
+        }
+        return mapping.get(trend, "neutral")
+
+    def _build_fallback_plan_from_opportunity(
+        self,
+        symbol: str,
+        market_data: Dict[str, Any],
+        account_balance: float,
+    ) -> Optional[TradePlan]:
+        score = self._as_float(market_data.get("opportunity_score"), 0.0)
+        direction = str(market_data.get("opportunity_direction") or "neutral").lower()
+        if score < 72 or direction not in {"long", "short"}:
+            return None
+
+        current_price = self._as_float(market_data.get("current_price"), 0.0)
+        if current_price <= 0:
+            return None
+
+        tf_15m = market_data.get("timeframe_analysis", {}).get("15m", {})
+        atr_15m = self._as_float(tf_15m.get("atr"), current_price * 0.005)
+        if atr_15m <= 0:
+            atr_15m = current_price * 0.005
+
+        action = "buy" if direction == "long" else "sell"
+        suggested_sl = self._as_float(market_data.get("opportunity_suggested_sl"), 0.0)
+        suggested_tp = self._as_float(market_data.get("opportunity_suggested_tp"), 0.0)
+
+        if action == "buy":
+            stop_loss = suggested_sl if 0 < suggested_sl < current_price else current_price - (atr_15m * 1.25)
+            take_profit = suggested_tp if suggested_tp > current_price else current_price + (atr_15m * 2.0)
+        else:
+            stop_loss = suggested_sl if suggested_sl > current_price else current_price + (atr_15m * 1.25)
+            take_profit = suggested_tp if 0 < suggested_tp < current_price else current_price - (atr_15m * 2.0)
+
+        risk_pct = 1.2 if account_balance <= 150 else 1.8
+        confidence = max(0.60, min(0.78, 0.60 + ((score - 72) * 0.006)))
+        return TradePlan(
+            symbol=symbol,
+            action=action,
+            entry_price=current_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            risk_pct=risk_pct,
+            reasoning=(
+                f"Deterministic fallback from OpportunityScorer (score={score:.1f}, direction={direction}). "
+                "LLM returned WAIT, so execution used ATR-anchored fallback levels."
+            ),
+            confidence=confidence,
+        )
+
     async def make_decision(self, symbol: str, market_data: Dict[str, Any], account_balance: float, autonomous_mode: bool = True) -> Dict[str, Any]:
         """
         Execute the Council Workflow:
@@ -89,8 +162,22 @@ class TradingCouncil:
             logger.error(f"Analyst failed for {symbol}: {e}")
             return self._create_wait_decision(symbol, f"Analyst error: {e}")
         
-        if regime.recommended_strategy == "Wait" or (not autonomous_mode and regime.confidence < 0.72):
-            return self._create_wait_decision(symbol, f"Analyst suggests waiting ({regime.regime})")
+        if autonomous_mode:
+            # In autonomous mode, analyst guidance is advisory.
+            # Only block if regime confidence is very weak.
+            if regime.confidence < 0.55:
+                return self._create_wait_decision(
+                    symbol,
+                    f"Analyst confidence too low for autonomous plan ({regime.regime}, {regime.confidence:.2f})"
+                )
+            if regime.recommended_strategy == "Wait":
+                logger.info(
+                    f"Analyst suggested WAIT for {symbol}, but autonomous planning remains enabled "
+                    f"(regime={regime.regime}, conf={regime.confidence:.2f})"
+                )
+        else:
+            if regime.recommended_strategy == "Wait" or regime.confidence < 0.72:
+                return self._create_wait_decision(symbol, f"Analyst suggests waiting ({regime.regime})")
 
         # 3. Create Trade Plan
         try:
@@ -123,15 +210,80 @@ class TradingCouncil:
         except Exception as e:
             logger.error(f"Strategist failed for {symbol}: {e}")
             return self._create_wait_decision(symbol, f"Strategist error: {e}")
-        
+
+        if plan.action == "wait" and autonomous_mode:
+            tf_15m = market_data.get("timeframe_analysis", {}).get("15m", {})
+            try:
+                volume_ratio_15m = float(tf_15m.get("volume_ratio", 1.0) or 1.0)
+            except (TypeError, ValueError):
+                volume_ratio_15m = 1.0
+
+            if regime.confidence >= 0.58 and volume_ratio_15m >= 1.0:
+                logger.info(
+                    f"{symbol}: strategist returned WAIT under actionable conditions "
+                    f"(regime_conf={regime.confidence:.2f}, vol={volume_ratio_15m:.2f}x); retrying in decisive mode"
+                )
+                try:
+                    retry_plan, retry_prompt, retry_response = await self.strategist.create_autonomous_plan(
+                        symbol=symbol,
+                        regime=regime,
+                        market_data=market_data,
+                        account_balance=account_balance,
+                        force_action=True,
+                    )
+                    if retry_plan.action != "wait":
+                        plan = retry_plan
+                        s_prompt = retry_prompt
+                        s_response = retry_response
+                        logger.info(f"{symbol}: decisive retry produced {plan.action.upper()} plan")
+                except Exception as retry_error:
+                    logger.warning(f"Decisive retry failed for {symbol}: {retry_error}")
+
         if plan.action == "wait":
-            return self._create_wait_decision(symbol, f"Strategist decided to wait: {plan.reasoning}")
+            fallback_plan = self._build_fallback_plan_from_opportunity(
+                symbol=symbol,
+                market_data=market_data,
+                account_balance=account_balance,
+            )
+            if fallback_plan:
+                plan = fallback_plan
+                strategy_name = "OpportunityFallback"
+                logger.info(
+                    f"{symbol}: replacing WAIT with deterministic fallback plan "
+                    f"(opportunity_score={self._as_float(market_data.get('opportunity_score'), 0.0):.1f})"
+                )
+            else:
+                return self._create_wait_decision(symbol, f"Strategist decided to wait: {plan.reasoning}")
         
         # 3.5 Multi-Timeframe Confirmation (NEW)
+        htf_soft_override = False
         htf_aligned = self._check_htf_alignment(symbol, market_data, plan.action)
         if not htf_aligned:
-            logger.warning(f"⚠️ {symbol}: HTF not aligned for {plan.action.upper()} - skipping trade")
-            return self._create_wait_decision(symbol, f"HTF not aligned for {plan.action} direction")
+            score = self._as_float(market_data.get("opportunity_score"), 0.0)
+            tf_15m = market_data.get("timeframe_analysis", {}).get("15m", {})
+            adx_15m = self._as_float(tf_15m.get("adx"), 25.0)
+            regime_name = str(regime.regime or "").lower()
+            soft_override = (
+                score >= 86
+                and plan.confidence >= 0.66
+                and (
+                    (regime_name in {"volatile", "range_chop"} and adx_15m <= 18)
+                    or adx_15m <= 16
+                )
+            )
+            if soft_override:
+                logger.warning(
+                    f"⚠️ {symbol}: HTF soft-override enabled for {plan.action.upper()} "
+                    f"(score={score:.1f}, conf={plan.confidence:.2f}, regime={regime_name}, adx15={adx_15m:.1f})"
+                )
+                htf_aligned = True
+                htf_soft_override = True
+            else:
+                logger.warning(
+                    f"⚠️ {symbol}: HTF not aligned for {plan.action.upper()} "
+                    f"(score={score:.1f}, conf={plan.confidence:.2f}) - skipping trade"
+                )
+                return self._create_wait_decision(symbol, f"HTF not aligned for {plan.action} direction")
         
         logger.info(f"✅ {symbol}: HTF alignment confirmed for {plan.action.upper()}")
         
@@ -180,7 +332,10 @@ class TradingCouncil:
                 "analyst": regime.reasoning,
                 "strategist": plan.reasoning,
                 "regime": regime.regime,
-                "htf_aligned": True
+                "htf_aligned": True,
+                "htf_soft_override": htf_soft_override,
+                "opportunity_score": self._as_float(market_data.get("opportunity_score"), 0.0),
+                "opportunity_direction": str(market_data.get("opportunity_direction") or "neutral"),
             }
         }
 
@@ -206,20 +361,27 @@ class TradingCouncil:
         h1_data = tf.get("1h", {})
         h4_data = tf.get("4h", {})
         
-        h1_trend = h1_data.get("trend", "neutral")
-        h4_trend = h4_data.get("trend", "neutral")
+        h1_trend = self._normalize_trend(h1_data.get("trend", "neutral"))
+        h4_trend = self._normalize_trend(h4_data.get("trend", "neutral"))
+        adx_1h = self._as_float(h1_data.get("adx"), 0.0)
         
         # Normalize trend values (handle different naming conventions)
-        bullish_trends = ["uptrend", "bullish", "trending_up", "up"]
-        bearish_trends = ["downtrend", "bearish", "trending_down", "down"]
-        neutral_trends = ["neutral", "ranging", "sideways", "range_chop"]
-        
+        bullish_trends = ["uptrend"]
+        bearish_trends = ["downtrend"]
+        neutral_trends = ["neutral"]
+        low_trend_strength = adx_1h > 0 and adx_1h < 18
+
         if direction.lower() == "buy":
-            # For longs: 1H must be bullish, 4H must be bullish or neutral
+            # For longs: prefer strict alignment; allow relaxed alignment only in weak HTF trend.
             h1_aligned = h1_trend.lower() in bullish_trends
             h4_ok = h4_trend.lower() in bullish_trends or h4_trend.lower() in neutral_trends
-            
+
             if h1_aligned and h4_ok:
+                return True
+            if h1_aligned and low_trend_strength:
+                logger.info(
+                    f"{symbol}: HTF relaxed long alignment accepted (h1={h1_trend}, h4={h4_trend}, adx1h={adx_1h:.1f})"
+                )
                 return True
             
             # Log why alignment failed
@@ -229,11 +391,16 @@ class TradingCouncil:
                 logger.debug(f"{symbol}: 4H trend '{h4_trend}' not supportive for LONG")
                 
         elif direction.lower() == "sell":
-            # For shorts: 1H must be bearish, 4H must be bearish or neutral
+            # For shorts: prefer strict alignment; allow relaxed alignment only in weak HTF trend.
             h1_aligned = h1_trend.lower() in bearish_trends
             h4_ok = h4_trend.lower() in bearish_trends or h4_trend.lower() in neutral_trends
-            
+
             if h1_aligned and h4_ok:
+                return True
+            if h1_aligned and low_trend_strength:
+                logger.info(
+                    f"{symbol}: HTF relaxed short alignment accepted (h1={h1_trend}, h4={h4_trend}, adx1h={adx_1h:.1f})"
+                )
                 return True
             
             # Log why alignment failed

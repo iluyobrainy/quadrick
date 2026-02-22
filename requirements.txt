@@ -3,14 +3,14 @@
 
 # Exchange & API
 pybit>=5.7.0
-websockets>=12.0
+websockets>=12.0,<16.0
 aiohttp>=3.9.0
 fastapi>=0.109.0
 uvicorn>=0.27.0
 
 # Data & Analysis
 numpy>=1.26.2
-pandas>=2.3.2
+pandas>=2.3.2,<3.0
 # ta-lib==0.4.28  # Install separately from wheel for Windows
 pandas-ta==0.4.71b0
 

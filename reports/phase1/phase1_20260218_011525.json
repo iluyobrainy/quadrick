@@ -1,0 +1,122 @@
+{
+  "phase": "phase1_paper_assessment",
+  "run_window": {
+    "started_at_utc": "2026-02-18T01:12:01.766148+00:00",
+    "finished_at_utc": "2026-02-18T01:15:25.978474+00:00",
+    "duration_minutes_target": 2,
+    "duration_minutes_actual": 3.404,
+    "poll_seconds": 15
+  },
+  "mode": {
+    "bybit_testnet": true,
+    "allow_live_trading": false,
+    "start_equity_for_projection": 100.0
+  },
+  "run_stats": {
+    "initialized": true,
+    "fatal_error": null,
+    "runtime_error_count": 0,
+    "runtime_errors": [],
+    "runtime_notes": [],
+    "forced_task_cancelled": false,
+    "snapshots_collected": 4,
+    "positions_after_cleanup": 0,
+    "closed_trades": 1
+  },
+  "metrics": {
+    "closed_trades": 1,
+    "wins": 0,
+    "losses": 1,
+    "win_rate_pct": 0.0,
+    "expectancy_pct_per_trade": -4.214192,
+    "avg_win_pct": 0.0,
+    "avg_loss_pct": -4.214192,
+    "gross_profit_pct": 0,
+    "gross_loss_pct": -4.214192,
+    "profit_factor": 0.0,
+    "max_drawdown_pct_on_100": 4.214192,
+    "end_equity_100": 95.785808,
+    "total_return_pct_on_100": -4.214192,
+    "net_pnl_on_100": -4.214192,
+    "trades_per_hour": 17.628711,
+    "projected_7d_trade_count": 2961,
+    "projected_30d_trade_count": 12692,
+    "projection_7d_100": {
+      "p10": 100.0,
+      "p50": 100.0,
+      "p90": 100.0
+    },
+    "projection_30d_100": {
+      "p10": 100.0,
+      "p50": 100.0,
+      "p90": 100.0
+    }
+  },
+  "grades": {
+    "engineering_grade": 90.0,
+    "engineering_notes": [
+      "Short/noisy observation window."
+    ],
+    "quant_grade": 14.9,
+    "quant_notes": [
+      "Grade capped at 60 due to small sample (<10 closed trades).",
+      "Non-positive expectancy observed.",
+      "Profit factor below 1.0 indicates weak edge."
+    ]
+  },
+  "trades": [
+    {
+      "symbol": "ADAUSDT",
+      "pnl": -4.214192107222636,
+      "strategy_tag": "AutonomousAI",
+      "regime": "bear_trend",
+      "win": false,
+      "is_flat": false,
+      "timestamp": "2026-02-18 01:15:24.847753+00:00"
+    }
+  ],
+  "equity_curve_100": [
+    {
+      "trade_index": 0,
+      "equity": 100.0
+    },
+    {
+      "trade_index": 1,
+      "equity": 95.785808
+    }
+  ],
+  "snapshots": [
+    {
+      "timestamp_utc": "2026-02-18T01:13:34.353594+00:00",
+      "account_balance": 66752.01102966,
+      "available_balance": 60010.80354743,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-18T01:13:49.369408+00:00",
+      "account_balance": 66752.01102966,
+      "available_balance": 60010.80354743,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-18T01:14:04.372920+00:00",
+      "account_balance": 66752.01102966,
+      "available_balance": 60010.80354743,
+      "open_positions": 0,
+      "closed_trades": 0,
+      "tracked_trades": 0
+    },
+    {
+      "timestamp_utc": "2026-02-18T01:14:19.395104+00:00",
+      "account_balance": 66771.7357767,
+      "available_balance": 59991.75525537,
+      "open_positions": 1,
+      "closed_trades": 0,
+      "tracked_trades": 1
+    }
+  ]
+}

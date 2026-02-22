@@ -81,7 +81,8 @@ class StrategistAgent:
                                      symbol: str, 
                                      regime: MarketRegime, 
                                      market_data: Dict[str, Any],
-                                     account_balance: float) -> Tuple[TradePlan, str, str]:
+                                     account_balance: float,
+                                     force_action: bool = False) -> Tuple[TradePlan, str, str]:
         """
         AI-Only Mode: Designs a trade plan without any code-based heuristics.
         Uses professional Knowledge Base + RAG memories + Real-time Indicators.
@@ -93,7 +94,15 @@ class StrategistAgent:
         similar_trades = market_data.get("similar_trades", [])
         
         # 2. Build the autonomous prompt
-        prompt = self._build_autonomous_prompt(symbol, regime, market_data, knowledge, similar_trades, account_balance)
+        prompt = self._build_autonomous_prompt(
+            symbol,
+            regime,
+            market_data,
+            knowledge,
+            similar_trades,
+            account_balance,
+            force_action=force_action,
+        )
         
         try:
             response = await self.llm.get_completion(
@@ -120,7 +129,16 @@ class StrategistAgent:
             logger.error(f"Autonomous Strategist failed for {symbol}: {e}")
             return TradePlan(symbol, "wait", 0, 0, 0, 0, f"Error: {e}", 0.0), prompt, str(e)
 
-    def _build_autonomous_prompt(self, symbol: str, regime: MarketRegime, data: Dict[str, Any], knowledge: str, similar_trades: list, account_balance: float) -> str:
+    def _build_autonomous_prompt(
+        self,
+        symbol: str,
+        regime: MarketRegime,
+        data: Dict[str, Any],
+        knowledge: str,
+        similar_trades: list,
+        account_balance: float,
+        force_action: bool = False,
+    ) -> str:
         current_price = data.get("current_price", 0)
         tf_analysis = data.get("timeframe_analysis", {})
         
@@ -131,6 +149,16 @@ class StrategistAgent:
                 f"- Past Trade: {t.get('symbol')} | Result: {'WIN' if t.get('win') else 'LOSS'} | PnL: {t.get('pnl_pct')}% | Strategy used: {t.get('strategy')}"
                 for t in similar_trades
             ])
+
+        force_directive = ""
+        if force_action:
+            force_directive = (
+                "\nDECISIVE MODE:\n"
+                "- Prefer an actionable trade plan if the setup is coherent.\n"
+                "- Do not default to WAIT because of minor uncertainty.\n"
+                "- Use conservative risk if conviction is moderate.\n"
+                "- WAIT is forbidden unless market data is clearly missing or structurally contradictory."
+            )
 
         return f"""
 AUTHENTIC AUTONOMOUS TRADING PLAN: {symbol}
@@ -154,6 +182,7 @@ LTF TRIGGER (15M/5M):
 - 15m Trend: {tf_analysis.get('15m', {}).get('trend', 'neutral')} | RSI: {tf_analysis.get('15m', {}).get('rsi', 50)}
 - 15m Volume Ratio: {tf_analysis.get('15m', {}).get('volume_ratio', 1.0)}x average
 - Key Levels: {data.get('key_levels', 'N/A')}
+{force_directive}
 
 TASK:
 1. FORECAST: Analyze the 1-minute chart. Predict the Price Action for the next 2-5 minutes (Next 3 candles).

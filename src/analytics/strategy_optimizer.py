@@ -38,7 +38,7 @@ class StrategyOptimizer:
         self,
         strategy_name: str,
         pnl: float,
-        win: bool,
+        win: Optional[bool],
         market_regime: str = "neutral",
         timeframe: str = "1h",
         leverage: float = 10.0,
@@ -50,7 +50,7 @@ class StrategyOptimizer:
         Args:
             strategy_name: Name of the strategy used
             pnl: Profit/loss percentage
-            win: Whether the trade was profitable
+            win: Whether the trade was profitable; None means neutral/flat outcome
             market_regime: Current market regime
             timeframe: Timeframe used
             leverage: Leverage used
@@ -64,6 +64,7 @@ class StrategyOptimizer:
                 "total_trades": 0,
                 "wins": 0,
                 "losses": 0,
+                "decisive_trades": 0,
                 "total_pnl": 0,
                 "avg_pnl": 0,
                 "win_rate": 0,
@@ -74,39 +75,54 @@ class StrategyOptimizer:
             }
 
         strategy = self.strategy_performance[strategy_name]
+        if "decisive_trades" not in strategy:
+            strategy["decisive_trades"] = strategy.get("wins", 0) + strategy.get("losses", 0)
         strategy["total_trades"] += 1
         strategy["total_pnl"] += pnl
 
-        if win:
+        if win is True:
             strategy["wins"] += 1
-        else:
+            strategy["decisive_trades"] += 1
+        elif win is False:
             strategy["losses"] += 1
+            strategy["decisive_trades"] += 1
 
         strategy["avg_pnl"] = strategy["total_pnl"] / strategy["total_trades"]
-        strategy["win_rate"] = strategy["wins"] / strategy["total_trades"]
+        decisive_total = max(1, int(strategy.get("decisive_trades", 0)))
+        strategy["win_rate"] = strategy["wins"] / decisive_total
         strategy["best_pnl"] = max(strategy["best_pnl"], pnl)
         strategy["worst_pnl"] = min(strategy["worst_pnl"], pnl)
 
         # Track regime performance
         if market_regime not in strategy["regime_performance"]:
-            strategy["regime_performance"][market_regime] = {"trades": 0, "wins": 0, "pnl": 0}
+            strategy["regime_performance"][market_regime] = {"trades": 0, "wins": 0, "decisive_trades": 0, "pnl": 0}
 
         regime_stats = strategy["regime_performance"][market_regime]
+        if "decisive_trades" not in regime_stats:
+            regime_stats["decisive_trades"] = regime_stats.get("wins", 0)
         regime_stats["trades"] += 1
         regime_stats["pnl"] += pnl
-        if win:
+        if win is True:
             regime_stats["wins"] += 1
+            regime_stats["decisive_trades"] += 1
+        elif win is False:
+            regime_stats["decisive_trades"] += 1
 
         # Track parameter performance (simplified)
         param_key = f"L{leverage}_R{risk_pct}_T{timeframe}"
         if param_key not in strategy["parameter_performance"]:
-            strategy["parameter_performance"][param_key] = {"trades": 0, "wins": 0, "pnl": 0}
+            strategy["parameter_performance"][param_key] = {"trades": 0, "wins": 0, "decisive_trades": 0, "pnl": 0}
 
         param_stats = strategy["parameter_performance"][param_key]
+        if "decisive_trades" not in param_stats:
+            param_stats["decisive_trades"] = param_stats.get("wins", 0)
         param_stats["trades"] += 1
         param_stats["pnl"] += pnl
-        if win:
+        if win is True:
             param_stats["wins"] += 1
+            param_stats["decisive_trades"] += 1
+        elif win is False:
+            param_stats["decisive_trades"] += 1
 
         return self._generate_insights(strategy_name, strategy)
 
@@ -146,7 +162,8 @@ class StrategyOptimizer:
 
         for regime, stats in strategy_data["regime_performance"].items():
             if stats["trades"] >= 3:  # Need minimum sample
-                regime_win_rate = stats["wins"] / stats["trades"]
+                decisive = max(1, int(stats.get("decisive_trades", stats.get("trades", 0))))
+                regime_win_rate = stats["wins"] / decisive
                 if regime_win_rate > best_regime_win_rate:
                     best_regime = regime
                     best_regime_win_rate = regime_win_rate

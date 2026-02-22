@@ -29,13 +29,22 @@ class RiskManager:
     
     def __init__(
         self,
-        min_risk_pct: float = 10.0,
-        max_risk_pct: float = 20.0,  # Lowered from 30% for scalping
-        max_daily_drawdown_pct: float = 15.0,  # Tighter for scalping (was 30%)
-        max_leverage: int = 50,
-        max_concurrent_positions: int = 3,
+        min_risk_pct: float = 1.0,
+        max_risk_pct: float = 6.0,
+        max_daily_drawdown_pct: float = 12.0,
+        max_leverage: int = 10,
+        max_concurrent_positions: int = 2,
         min_account_balance: float = 3.0,
         high_impact_news_blackout_mins: int = 15,
+        small_account_balance_threshold: float = 150.0,
+        small_account_max_risk_pct: float = 3.0,
+        small_account_max_leverage: int = 5,
+        min_stop_distance_pct: float = 0.35,
+        max_stop_distance_pct: float = 8.0,
+        symbol_max_margin_pct: float = 15.0,
+        portfolio_max_margin_pct: float = 35.0,
+        enforce_single_position_per_symbol: bool = True,
+        allow_scale_in: bool = False,
     ):
         """Initialize risk manager"""
         self.min_risk_pct = min_risk_pct
@@ -45,6 +54,15 @@ class RiskManager:
         self.max_concurrent_positions = max_concurrent_positions
         self.min_account_balance = min_account_balance
         self.high_impact_news_blackout_mins = high_impact_news_blackout_mins
+        self.small_account_balance_threshold = small_account_balance_threshold
+        self.small_account_max_risk_pct = small_account_max_risk_pct
+        self.small_account_max_leverage = small_account_max_leverage
+        self.min_stop_distance_pct = min_stop_distance_pct
+        self.max_stop_distance_pct = max_stop_distance_pct
+        self.symbol_max_margin_pct = symbol_max_margin_pct
+        self.portfolio_max_margin_pct = portfolio_max_margin_pct
+        self.enforce_single_position_per_symbol = enforce_single_position_per_symbol
+        self.allow_scale_in = allow_scale_in
         
         # Track daily performance
         self.daily_start_balance: Optional[float] = None
@@ -58,6 +76,23 @@ class RiskManager:
         self.halt_until: Optional[datetime] = None
         
         logger.info("Risk manager initialized")
+
+    @staticmethod
+    def _position_symbol(position: Any) -> str:
+        if isinstance(position, dict):
+            return str(position.get("symbol") or "")
+        return str(getattr(position, "symbol", "") or "")
+
+    @staticmethod
+    def _position_size(position: Any) -> float:
+        if isinstance(position, dict):
+            raw = position.get("size", 0)
+        else:
+            raw = getattr(position, "size", 0)
+        try:
+            return float(raw or 0)
+        except (TypeError, ValueError):
+            return 0.0
     
     def validate_trade(
         self,
@@ -114,43 +149,50 @@ class RiskManager:
             )
             return validation
         
+        symbol = str(trade_decision.get("symbol") or "")
+        scale_in_requested = bool(trade_decision.get("scale_in"))
+
+        active_positions = [p for p in open_positions if self._position_size(p) > 0]
+
         # 2. Check concurrent positions limit
-        if len(open_positions) >= self.max_concurrent_positions:
+        if len(active_positions) >= self.max_concurrent_positions:
             validation.is_valid = False
             validation.rejection_reasons.append(
-                f"Already have {len(open_positions)} positions (max: {self.max_concurrent_positions})"
+                f"Already have {len(active_positions)} positions (max: {self.max_concurrent_positions})"
             )
             return validation
+
+        # 2b. Default single-position-per-symbol safety.
+        if self.enforce_single_position_per_symbol and symbol:
+            same_symbol_open = [
+                p for p in active_positions
+                if self._position_symbol(p) == symbol and self._position_size(p) > 0
+            ]
+            scale_in_allowed = self.allow_scale_in and scale_in_requested
+            if same_symbol_open and not scale_in_allowed:
+                validation.is_valid = False
+                validation.rejection_reasons.append(
+                    f"Open position already exists on {symbol}; scale-in is disabled by policy"
+                )
+                return validation
         
         # 3. Validate risk percentage (adjust for small accounts)
-        risk_pct = trade_decision.get("risk_pct", 15)
+        try:
+            risk_pct = float(trade_decision.get("risk_pct", self.max_risk_pct))
+        except (TypeError, ValueError):
+            risk_pct = self.max_risk_pct
 
-        # For very small accounts, reduce risk to prevent oversized positions
-        # unless it's so small that we need some risk just to meet exchange minimums
-        if account_balance < 20:
-            max_risk_for_small = 15.0  # Increased from 8.0 to allow 0.001 BTC trades
+        if account_balance <= self.small_account_balance_threshold:
+            max_risk_for_small = min(self.max_risk_pct, self.small_account_max_risk_pct)
             if risk_pct > max_risk_for_small:
                 validation.adjusted_risk_pct = max_risk_for_small
                 validation.warnings.append(
-                    f"Risk capped at {max_risk_for_small}% for small account safety"
-                )
-                risk_pct = max_risk_for_small
-        elif account_balance < 50:
-            max_risk_for_small = 10.0  # Max 10% risk for accounts < $50
-            if risk_pct > max_risk_for_small:
-                validation.adjusted_risk_pct = max_risk_for_small
-                validation.warnings.append(
-                    f"Risk reduced from {risk_pct}% to {max_risk_for_small}% for small account safety"
+                    f"Risk capped at {max_risk_for_small}% for small-account mode"
                 )
                 risk_pct = max_risk_for_small
 
         if risk_pct < self.min_risk_pct or risk_pct > self.max_risk_pct:
-            # Adjust to valid range (allow lower risk for very small accounts)
-            if risk_pct < self.min_risk_pct and account_balance < 20:
-                adjusted_risk = risk_pct  # honor conservative sizing for tiny balances
-            else:
-                adjusted_risk = max(self.min_risk_pct, min(self.max_risk_pct, risk_pct))
-
+            adjusted_risk = max(self.min_risk_pct, min(self.max_risk_pct, risk_pct))
             if adjusted_risk != risk_pct:
                 validation.adjusted_risk_pct = adjusted_risk
                 validation.warnings.append(
@@ -169,17 +211,17 @@ class RiskManager:
             return validation
         
         # 5. Validate leverage
-        leverage = trade_decision.get("leverage", 10)
+        try:
+            leverage = int(float(trade_decision.get("leverage", self.max_leverage)))
+        except (TypeError, ValueError):
+            leverage = self.max_leverage
 
-        # Reduce leverage for tiny accounts to make margin requirements smaller
-        if account_balance < 10:
-            max_leverage_for_tiny = 10  # Max 10x for accounts under $10
-            if leverage > max_leverage_for_tiny:
-                validation.adjusted_leverage = max_leverage_for_tiny
-                validation.warnings.append(
-                    f"Leverage reduced from {leverage}x to {max_leverage_for_tiny}x for tiny account"
-                )
-                leverage = max_leverage_for_tiny
+        if account_balance <= self.small_account_balance_threshold and leverage > self.small_account_max_leverage:
+            validation.adjusted_leverage = self.small_account_max_leverage
+            validation.warnings.append(
+                f"Leverage reduced from {leverage}x to {self.small_account_max_leverage}x for small-account mode"
+            )
+            leverage = self.small_account_max_leverage
 
         if leverage > self.max_leverage:
             validation.adjusted_leverage = self.max_leverage
@@ -193,12 +235,20 @@ class RiskManager:
             symbol = trade_decision.get("symbol", "")
             side = trade_decision.get("side", "")
 
-            # Get technical analysis for this symbol
-            symbol_analysis = market_analysis.get('technical_analysis', {}).get(symbol, {})
-            tf_analysis = symbol_analysis.get('timeframe_analysis', {})
+            # Get technical analysis for this symbol.
+            # `market_analysis` may be the root dict keyed by symbol (main loop),
+            # or wrapped under `technical_analysis` in other callers.
+            symbol_analysis = {}
+            if isinstance(market_analysis, dict):
+                if symbol in market_analysis:
+                    symbol_analysis = market_analysis.get(symbol, {})
+                else:
+                    symbol_analysis = market_analysis.get('technical_analysis', {}).get(symbol, {})
+
+            tf_analysis = symbol_analysis.get('timeframe_analysis', symbol_analysis.get('timeframes', {}))
 
             # Check 1h timeframe for trend strength
-            adx_1h = tf_analysis.get('1h', {}).get('adx', 0)
+            adx_1h = float(tf_analysis.get('1h', {}).get('adx', 0) or 0)
             trend_1h = tf_analysis.get('1h', {}).get('trend', '')
 
             allow_counter_trend = bool(trade_decision.get("allow_counter_trend"))
@@ -208,12 +258,12 @@ class RiskManager:
                 if is_counter_trend:
                     if allow_counter_trend:
                         validation.warnings.append(
-                            f"⚠️ Counter-trend trade approved by override (ADX {adx_1h:.1f}). Tight risk management required."
+                            f"Counter-trend trade approved by override (ADX {adx_1h:.1f}). Tight risk management required."
                         )
                     else:
                         validation.is_valid = False
                         validation.rejection_reasons.append(
-                            f"🚫 COUNTER-TREND BLOCKED: ADX {adx_1h:.1f} indicates strong {trend_1h.replace('_', ' ')}. {side} trades forbidden unless explicitly allowed."
+                            f"COUNTER-TREND BLOCKED: ADX {adx_1h:.1f} indicates strong {trend_1h.replace('_', ' ')}. {side} trades forbidden unless explicitly allowed."
                         )
                         return validation
 
@@ -227,37 +277,117 @@ class RiskManager:
                 stop_loss,
                 leverage,
             )
-            # Dynamic margin caps for small accounts
-            if account_balance < 20:
-                max_margin_pct = 0.7  # up to 70% of balance for tiny accounts
-                max_exposure_pct = 400  # up to 400% notional exposure
-            elif account_balance < 50:
-                max_margin_pct = 0.5
-                max_exposure_pct = 300
+            desired_qty = max(0.0, float(position_size))
+            desired_notional = desired_qty * float(market_price)
+            desired_margin = desired_notional / max(1.0, float(leverage))
+
+            existing_margin_used = 0.0
+            for open_position in open_positions or []:
+                try:
+                    if isinstance(open_position, dict):
+                        size_raw = open_position.get("size", 0)
+                        price_raw = open_position.get("mark_price") or open_position.get("entry_price") or 0
+                        lev_raw = open_position.get("leverage", 1)
+                    else:
+                        size_raw = getattr(open_position, "size", 0)
+                        price_raw = getattr(open_position, "mark_price", None)
+                        if not price_raw:
+                            price_raw = getattr(open_position, "entry_price", 0)
+                        lev_raw = getattr(open_position, "leverage", 1)
+                    size_value = abs(float(size_raw or 0))
+                    price_value = float(price_raw or 0)
+                    lev_value = max(1.0, float(lev_raw or 1))
+                    if size_value <= 0 or price_value <= 0:
+                        continue
+                    existing_margin_used += (size_value * price_value) / lev_value
+                except (TypeError, ValueError):
+                    continue
+
+            symbol_cap_margin = account_balance * (float(self.symbol_max_margin_pct) / 100.0)
+            portfolio_cap_margin = account_balance * (float(self.portfolio_max_margin_pct) / 100.0)
+            remaining_portfolio_margin = max(0.0, portfolio_cap_margin - existing_margin_used)
+            liquid_cap_margin = max(0.0, liquid_balance * 0.95)
+            raw_effective_margin_cap = max(
+                0.0,
+                min(symbol_cap_margin, remaining_portfolio_margin, liquid_cap_margin),
+            )
+            margin_usd_epsilon = max(0.01, account_balance * 0.0001)
+            effective_margin_cap = max(0.0, raw_effective_margin_cap - margin_usd_epsilon)
+
+            min_notional_raw = trade_decision.get("min_notional", 5.5)
+            try:
+                min_notional = max(5.0, float(min_notional_raw or 5.5))
+            except (TypeError, ValueError):
+                min_notional = 5.5
+
+            symbol_name = str(trade_decision.get("symbol") or "")
+
+            if effective_margin_cap <= 0:
+                validation.is_valid = False
+                validation.rejection_reasons.append(
+                    "CAP_EXCEEDED: no remaining margin budget after portfolio and liquidity caps"
+                )
+                logger.warning(
+                    "CAP_REJECT symbol={} equity=${:.2f} cap_type=MARGIN cap_value=${:.2f} "
+                    "desired_notional=${:.2f} desired_margin=${:.2f} min_notional=${:.2f} "
+                    "clipped_notional=${:.2f} clipped_margin=${:.2f} reason=CAP_EXCEEDED",
+                    symbol_name,
+                    account_balance,
+                    symbol_cap_margin,
+                    desired_notional,
+                    desired_margin,
+                    min_notional,
+                    0.0,
+                    0.0,
+                )
+                return validation
+
+            cap_qty = (effective_margin_cap * float(leverage)) / float(market_price)
+            final_qty = min(desired_qty, cap_qty)
+            clipped_notional = final_qty * float(market_price)
+            clipped_margin = clipped_notional / max(1.0, float(leverage))
+
+            if final_qty < desired_qty:
+                position_size = final_qty
+                validation.warnings.append(
+                    "Position size clipped to active margin caps "
+                    f"(symbol={self.symbol_max_margin_pct:.1f}%, portfolio={self.portfolio_max_margin_pct:.1f}%)"
+                )
+                logger.info(
+                    "CAP_CLIP symbol={} equity=${:.2f} cap_type=MARGIN cap_value=${:.2f} "
+                    "desired_notional=${:.2f} desired_margin=${:.2f} min_notional=${:.2f} "
+                    "clipped_notional=${:.2f} clipped_margin=${:.2f} reason=CAP_EXCEEDED",
+                    symbol_name,
+                    account_balance,
+                    symbol_cap_margin,
+                    desired_notional,
+                    desired_margin,
+                    min_notional,
+                    clipped_notional,
+                    clipped_margin,
+                )
             else:
-                max_margin_pct = 0.25
-                max_exposure_pct = 200
+                position_size = desired_qty
 
-            # Cap by margin - CRITICAL: Respect LIQUID balance
-            margin_used = (position_size * market_price) / max(1, leverage)
-            # The maximum we can commit is based on total balance constraint, 
-            # BUT it's capped by the physical liquid cash available (95% to allow for fees).
-            max_margin = min(account_balance * max_margin_pct, liquid_balance * 0.95)
-            
-            if margin_used > max_margin:
-                position_size = (max_margin * leverage) / market_price
-                validation.warnings.append(
-                    f"Position size reduced to fit margin cap ({max_margin_pct*100:.0f}%)"
+            if (clipped_notional + margin_usd_epsilon) < min_notional:
+                validation.is_valid = False
+                validation.rejection_reasons.append(
+                    f"CLIPPED_BELOW_MIN: ${clipped_notional:.2f} < min_notional ${min_notional:.2f}"
                 )
-
-            # Cap by exposure
-            position_value = position_size * market_price
-            max_exposure_value = account_balance * (max_exposure_pct / 100)
-            if position_value > max_exposure_value:
-                position_size = max_exposure_value / market_price
-                validation.warnings.append(
-                    f"Position size reduced to fit exposure cap ({max_exposure_pct}%)"
+                logger.warning(
+                    "CAP_REJECT symbol={} equity=${:.2f} cap_type=MARGIN cap_value=${:.2f} "
+                    "desired_notional=${:.2f} desired_margin=${:.2f} min_notional=${:.2f} "
+                    "clipped_notional=${:.2f} clipped_margin=${:.2f} reason=CLIPPED_BELOW_MIN",
+                    symbol_name,
+                    account_balance,
+                    symbol_cap_margin,
+                    desired_notional,
+                    desired_margin,
+                    min_notional,
+                    clipped_notional,
+                    clipped_margin,
                 )
+                return validation
 
             validation.adjusted_position_size = position_size
         
@@ -272,15 +402,17 @@ class RiskManager:
         # 8. Validate stop loss placement
         if stop_loss and market_price:
             stop_distance_pct = abs(market_price - stop_loss) / market_price * 100
-            
-            # Warning if stop is too tight
-            if stop_distance_pct < 0.5:
-                validation.warnings.append(
-                    f"Stop loss very tight at {stop_distance_pct:.2f}%"
+
+            # Hard-reject tight stops to avoid noise-driven churn.
+            if stop_distance_pct < self.min_stop_distance_pct:
+                validation.is_valid = False
+                validation.rejection_reasons.append(
+                    f"Stop loss too tight at {stop_distance_pct:.2f}% (min {self.min_stop_distance_pct:.2f}%)"
                 )
-            
-            # Warning if stop is too wide
-            elif stop_distance_pct > 10:
+                return validation
+
+            # Warn if stop is too wide
+            if stop_distance_pct > self.max_stop_distance_pct:
                 validation.warnings.append(
                     f"Stop loss very wide at {stop_distance_pct:.2f}%"
                 )
@@ -458,14 +590,14 @@ class RiskManager:
         # Reduce risk in high volatility
         if vol_ratio > 1.5:  # 50% above average
             adjusted = base_risk_pct * 0.7  # Reduce by 30%
-            logger.debug(f"High volatility ({vol_ratio:.2f}x) - reducing risk: {base_risk_pct}% → {adjusted:.1f}%")
+            logger.debug(f"High volatility ({vol_ratio:.2f}x) - reducing risk: {base_risk_pct}% -> {adjusted:.1f}%")
             return adjusted
         
         # Increase risk slightly in low volatility
         elif vol_ratio < 0.7:  # 30% below average
             adjusted = base_risk_pct * 1.15  # Increase by 15%
             adjusted = min(adjusted, self.max_risk_pct)  # Cap at max
-            logger.debug(f"Low volatility ({vol_ratio:.2f}x) - increasing risk: {base_risk_pct}% → {adjusted:.1f}%")
+            logger.debug(f"Low volatility ({vol_ratio:.2f}x) - increasing risk: {base_risk_pct}% -> {adjusted:.1f}%")
             return adjusted
         
         return base_risk_pct
@@ -539,8 +671,9 @@ class RiskManager:
         correlated_positions = []
 
         for position in open_positions:
-            if position.symbol in correlated_symbols:
-                correlated_positions.append(position.symbol)
+            position_symbol = self._position_symbol(position)
+            if position_symbol in correlated_symbols:
+                correlated_positions.append(position_symbol)
 
         if len(correlated_positions) >= 2:
             return f"High correlation risk: {len(correlated_positions)} correlated positions"
@@ -576,94 +709,98 @@ class RiskManager:
             "portfolio_metrics": {}
         }
 
-        # Calculate portfolio metrics
-        total_position_value = sum(
-            abs(getattr(pos, 'size', 0) * getattr(pos, 'avg_price', getattr(pos, 'entry_price', 0)))
-            for pos in open_positions
-        )
+        def _position_notional(pos: Any) -> float:
+            if isinstance(pos, dict):
+                size_raw = pos.get("size", 0)
+                price_raw = pos.get("avg_price", pos.get("entry_price", 0))
+            else:
+                size_raw = getattr(pos, "size", 0)
+                price_raw = getattr(pos, "avg_price", getattr(pos, "entry_price", 0))
+            return abs(
+                float(size_raw or 0)
+                * float(price_raw or 0)
+            )
 
-        # For leveraged trading, risk is total exposure / account balance
-        # Account balance is the margin/capital at risk
-        total_exposure = total_position_value
-        portfolio_risk_pct = (total_exposure / account_balance) * 100 if account_balance > 0 else 0
+        def _position_leverage(pos: Any) -> float:
+            raw = (pos.get("leverage", 1) if isinstance(pos, dict) else getattr(pos, "leverage", 1)) or 1
+            try:
+                value = float(raw)
+                return max(1.0, value)
+            except (TypeError, ValueError):
+                return 1.0
+
+        active_positions = [p for p in open_positions if _position_notional(p) > 0]
+
+        # Portfolio exposure metrics: notional and margin usage.
+        total_position_value = sum(_position_notional(pos) for pos in active_positions)
+        total_margin_used = sum(_position_notional(pos) / _position_leverage(pos) for pos in active_positions)
+
+        # Margin load is a more accurate risk proxy than raw notional for leveraged accounts.
+        portfolio_margin_pct = (total_margin_used / account_balance) * 100 if account_balance > 0 else 0
+        effective_leverage = (total_position_value / account_balance) if account_balance > 0 else 0
 
         assessment["portfolio_metrics"] = {
-            "total_positions": len(open_positions),
+            "total_positions": len(active_positions),
             "total_position_value": round(total_position_value, 2),
-            "portfolio_leverage": round(portfolio_risk_pct, 1),
+            "total_margin_used": round(total_margin_used, 2),
+            "portfolio_margin_pct": round(portfolio_margin_pct, 1),
             "account_balance": round(account_balance, 2),
-            "effective_leverage": round(total_exposure / account_balance, 1) if account_balance > 0 else 0
+            "effective_leverage": round(effective_leverage, 1),
         }
 
         # Position count limits
-        if len(open_positions) >= 3:
-            assessment["warnings"].append(f"Portfolio has {len(open_positions)} positions (recommended max: 3)")
+        if len(active_positions) >= 2:
+            assessment["warnings"].append(f"Portfolio has {len(active_positions)} positions (recommended max: 2)")
 
-        # Portfolio concentration limits (adjusted for leveraged trading)
-        # For leveraged trading, allow much higher exposure ratios
-        if account_balance < 10:
-            max_portfolio_risk = 5000  # Allow up to 50x effective leverage for micro accounts
-        elif account_balance < 20:
-            max_portfolio_risk = 2000  # Allow up to 20x effective leverage for ultra-small accounts
-        elif account_balance < 50:
-            max_portfolio_risk = 400  # Allow up to 4x leverage for small accounts
-        else:
-            max_portfolio_risk = 300  # Standard 3x leverage limit
+        # Portfolio concentration limits (margin-based)
+        max_portfolio_risk = float(self.portfolio_max_margin_pct)
 
-        new_risk_pct = (new_position_value / account_balance) * 100 if account_balance > 0 else 100
-        total_risk_after = portfolio_risk_pct + new_risk_pct
+        new_margin_used = new_position_value / max(1, leverage)
+        new_risk_pct = (new_margin_used / account_balance) * 100 if account_balance > 0 else 100
+        total_risk_after = portfolio_margin_pct + new_risk_pct
 
-        logger.info(f"Portfolio risk check: balance=${account_balance:.2f}, max_risk={max_portfolio_risk}%, current_risk={portfolio_risk_pct:.1f}%, new_risk={new_risk_pct:.1f}%, total_after={total_risk_after:.1f}%")
+        logger.info(
+            f"Portfolio risk check: balance=${account_balance:.2f}, max_margin={max_portfolio_risk}%, "
+            f"current_margin={portfolio_margin_pct:.1f}%, new_margin={new_risk_pct:.1f}%, total_after={total_risk_after:.1f}%"
+        )
 
-        if total_risk_after > max_portfolio_risk:
-            assessment["restrictions"].append(f"Portfolio risk would exceed {max_portfolio_risk}% (would be {total_risk_after:.1f}%)")
+        margin_pct_epsilon = 0.05  # 0.05 percentage points tolerance for float/rounding noise.
+        if total_risk_after - max_portfolio_risk > margin_pct_epsilon:
+            assessment["restrictions"].append(
+                f"Portfolio margin would exceed {max_portfolio_risk}% (would be {total_risk_after:.1f}%)"
+            )
             assessment["can_open"] = False
+        elif abs(total_risk_after - max_portfolio_risk) <= margin_pct_epsilon:
+            logger.debug(
+                "Portfolio margin near limit accepted: "
+                f"total_after={total_risk_after:.6f}% max={max_portfolio_risk:.6f}% eps={margin_pct_epsilon:.6f}%"
+            )
 
-        # Single position size limits (based on margin used, not notional value)
-        # For leveraged trading, check margin usage per position
+        # Single position limits (based on margin used, not notional value)
         margin_used_by_position = new_position_value / leverage
+        max_single_margin = account_balance * (float(self.symbol_max_margin_pct) / 100.0)
 
-        if account_balance < 10:
-            max_single_margin = account_balance * 0.90  # Allow up to 90% margin for micro accounts
-        elif account_balance < 20:
-            max_single_margin = account_balance * 0.80  # Allow up to 80% margin for very small accounts
-        elif account_balance < 50:
-            max_single_margin = account_balance * 0.60  # Allow up to 60% margin for small accounts
-        elif account_balance < 100:
-            max_single_margin = account_balance * 0.35   # Moderate accounts
-        else:
-            max_single_margin = account_balance * 0.40   # Larger accounts
-
-        if margin_used_by_position > max_single_margin:
-            if account_balance < 10:
-                max_pct = 90
-            elif account_balance < 20:
-                max_pct = 80
-            elif account_balance < 50:
-                max_pct = 60
-            elif account_balance < 100:
-                max_pct = 35
-            else:
-                max_pct = 40
+        margin_usd_epsilon = max(0.01, account_balance * 0.0001)  # 1 cent minimum, 1bp balance-scaled.
+        if margin_used_by_position - max_single_margin > margin_usd_epsilon:
+            max_pct = float(self.symbol_max_margin_pct)
             assessment["restrictions"].append(f"Position margin exceeds {max_pct}% of account (${margin_used_by_position:.2f} > ${max_single_margin:.2f})")
             assessment["can_open"] = False
+        elif abs(margin_used_by_position - max_single_margin) <= margin_usd_epsilon:
+            logger.debug(
+                "Single-position margin near limit accepted: "
+                f"used=${margin_used_by_position:.6f} cap=${max_single_margin:.6f} eps=${margin_usd_epsilon:.6f}"
+            )
 
         return assessment
     
     def _get_suggested_risk(self, balance: float, current_risk: float) -> float:
         """Get suggested risk percentage based on balance/milestone"""
-        if balance < 50:
-            # Conservative phase
-            return min(15, current_risk)
-        elif balance < 200:
-            # Moderate phase
-            return min(20, max(15, current_risk))
+        if balance <= self.small_account_balance_threshold:
+            return min(3.0, current_risk)
         elif balance < 500:
-            # Moderate aggressive
-            return min(25, max(18, current_risk))
+            return min(4.0, max(2.0, current_risk))
         else:
-            # Maximum aggressive
-            return min(30, max(22, current_risk))
+            return min(5.0, max(2.5, current_risk))
     
     def _trigger_circuit_breaker(self, reason: str):
         """Trigger trading halt circuit breaker"""

@@ -44,11 +44,11 @@ try:
     )
     emergency_controls = EmergencyControls()
     
-    logger.info("✅ Quadrick modules loaded successfully")
+    logger.info("âœ… Quadrick modules loaded successfully")
     logger.info(f"   Bybit: {'Testnet' if settings_instance.bybit.testnet else 'Mainnet'}")
     
 except ImportError as e:
-    logger.error(f"❌ Could not import Quadrick modules: {e}")
+    logger.error(f"âŒ Could not import Quadrick modules: {e}")
     logger.error("   Make sure you're running from the quadrick directory with the virtual environment activated")
     logger.error("   Run: pip install -r requirements.txt")
 
@@ -61,24 +61,36 @@ app = FastAPI(
 # Background task for heartbeat logs
 async def heartbeat_task():
     while True:
-        logger.info("💓 Dashboard API Heartbeat - Connection Healthy")
+        logger.info("ðŸ’“ Dashboard API Heartbeat - Connection Healthy")
         await asyncio.sleep(30)
 
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(heartbeat_task())
 
+def _cors_config():
+    frontend_origin = os.getenv("VERCEL_FRONTEND_URL", "").strip().rstrip("/")
+    if frontend_origin:
+        return [frontend_origin, "http://localhost:3000", "http://127.0.0.1:3000"], True
+    return ["*"], False
+
+cors_origins, cors_allow_credentials = _cors_config()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=cors_origins,
+    allow_credentials=cors_allow_credentials,
     allow_methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
 @app.get("/")
 async def root():
-    return {"message": "Quadrick Dashboard API is running", "status": "ok"}
+    return {
+        "message": "Quadrick Dashboard API",
+        "version": "1.0.0",
+        "connected": bybit_client is not None,
+    }
 
 # Shared state between dashboard and bot
 bot_state = {
@@ -101,7 +113,12 @@ bot_state = {
     "positions": [],
     "market_context": {},
     "raw_market_data": {},
-    "ai_insights": []
+    "ai_insights": [],
+    "quant_monitor": {
+        "last": {},
+        "history": [],
+    },
+    "quant_alerts": [],
 }
 
 # Logs buffer for streaming
@@ -182,7 +199,9 @@ class SettingsUpdate(BaseModel):
     bybit_testnet: Optional[bool] = None
     deepseek_api_key: Optional[str] = None
     supabase_url: Optional[str] = None
-    supabase_key: Optional[str] = None
+    supabase_service_role_key: Optional[str] = None
+    supabase_anon_key: Optional[str] = None
+    supabase_key: Optional[str] = None  # legacy alias
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
     min_risk_pct: Optional[float] = None
@@ -199,15 +218,6 @@ class LogEntry(BaseModel):
 
 
 # --- API Endpoints ---
-
-@app.get("/")
-async def root():
-    return {
-        "message": "Quadrick Dashboard API",
-        "version": "1.0.0",
-        "connected": bybit_client is not None
-    }
-
 
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status():
@@ -355,17 +365,17 @@ async def control_bot(action: ControlAction):
     try:
         if action.action == "start":
             emergency_controls.resume_trading()
-            logger.info("▶ Received START command from dashboard")
+            logger.info("â–¶ Received START command from dashboard")
             return {"success": True, "message": "Bot mode set to ACTIVE"}
             
         elif action.action == "stop":
             emergency_controls.emergency_stop("Manual stop from dashboard")
-            logger.info("⏹ Received STOP command from dashboard")
+            logger.info("â¹ Received STOP command from dashboard")
             return {"success": True, "message": "Bot stopped via emergency switch"}
             
         elif action.action == "pause":
             emergency_controls.pause_trading("Manual pause from dashboard")
-            logger.info("⏸ Received PAUSE command from dashboard")
+            logger.info("â¸ Received PAUSE command from dashboard")
             return {"success": True, "message": "Bot paused temporarily"}
             
         else:
@@ -388,7 +398,7 @@ async def get_settings():
             "bybit_testnet": settings_instance.bybit.testnet,
             "deepseek_api_key": "****" + settings_instance.llm.deepseek_api_key[-4:] if settings_instance.llm.deepseek_api_key else "",
             "supabase_url": settings_instance.database.supabase_url if hasattr(settings_instance, 'database') else "",
-            "telegram_chat_id": settings_instance.notifications.chat_id if hasattr(settings_instance, 'notifications') else "",
+            "telegram_chat_id": settings_instance.notifications.telegram_chat_id if hasattr(settings_instance, 'notifications') else "",
             "min_risk_pct": settings_instance.trading.min_risk_pct,
             "max_risk_pct": settings_instance.trading.max_risk_pct,
             "max_leverage": settings_instance.trading.max_leverage,
@@ -421,6 +431,8 @@ async def update_settings(settings_update: SettingsUpdate):
             "bybit_testnet": "BYBIT_TESTNET",
             "deepseek_api_key": "DEEPSEEK_API_KEY",
             "supabase_url": "SUPABASE_URL",
+            "supabase_service_role_key": "SUPABASE_SERVICE_ROLE_KEY",
+            "supabase_anon_key": "SUPABASE_ANON_KEY",
             "supabase_key": "SUPABASE_KEY",
             "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
             "telegram_chat_id": "TELEGRAM_CHAT_ID",
@@ -448,7 +460,7 @@ async def update_settings(settings_update: SettingsUpdate):
         with open(env_path, "w") as f:
             f.writelines(lines)
         
-        logger.info("⚙️ Settings updated via dashboard")
+        logger.info("âš™ï¸ Settings updated via dashboard")
         return {"success": True, "message": "Settings saved. Restart bot to apply changes."}
     
     except Exception as e:
@@ -472,6 +484,25 @@ async def get_performance():
             "total_pnl": 0.0,
             "best_strategy": None,
         }
+
+
+@app.get("/api/quant-monitor")
+async def get_quant_monitor(limit: int = 120):
+    """Get recent quant-cycle monitoring metrics."""
+    quant_state = bot_state.get("quant_monitor", {})
+    history = list(quant_state.get("history", []))
+    safe_limit = max(1, min(int(limit), 500))
+    return {
+        "last": quant_state.get("last", {}),
+        "history": history[-safe_limit:],
+    }
+
+
+@app.get("/api/quant-alerts")
+async def get_quant_alerts(limit: int = 120):
+    """Get recent quant monitor alerts."""
+    safe_limit = max(1, min(int(limit), 500))
+    return {"alerts": bot_state.get("quant_alerts", [])[-safe_limit:]}
 
 
 # --- Internal Webhooks for Main Bot ---
@@ -531,6 +562,28 @@ async def update_internal_decision(decision: Dict[str, Any]):
     return {"success": True}
 
 
+@app.post("/internal/quant-monitor")
+async def update_internal_quant_monitor(monitor_payload: Dict[str, Any]):
+    """Receive quant monitor metrics from main bot."""
+    quant_state = bot_state.setdefault("quant_monitor", {"last": {}, "history": []})
+    quant_state["last"] = monitor_payload
+    history = quant_state.setdefault("history", [])
+    history.append(monitor_payload)
+    if len(history) > 500:
+        del history[:-500]
+    return {"success": True}
+
+
+@app.post("/internal/quant-alert")
+async def update_internal_quant_alert(alert_payload: Dict[str, Any]):
+    """Receive quant alert payload from main bot."""
+    alerts = bot_state.setdefault("quant_alerts", [])
+    alerts.append(alert_payload)
+    if len(alerts) > 500:
+        del alerts[:-500]
+    return {"success": True}
+
+
 @app.post("/internal/log")
 async def update_internal_log(log: LogEntry):
     """Receive log from main bot"""
@@ -550,7 +603,7 @@ async def update_internal_log(log: LogEntry):
 async def clear_internal_logs():
     """Clear the log buffer (called on bot restart)"""
     log_buffer.clear()
-    logger.info("🧹 Dashboard log buffer cleared")
+    logger.info("ðŸ§¹ Dashboard log buffer cleared")
     return {"success": True}
 
 
@@ -584,7 +637,7 @@ if __name__ == "__main__":
     print("="*60)
     
     if bybit_client:
-        print("✅ Connected to Bybit")
+        print("âœ… Connected to Bybit")
         try:
             balance = bybit_client.get_account_balance()
             if balance:
@@ -592,14 +645,13 @@ if __name__ == "__main__":
         except:
             pass
     else:
-        print("❌ Not connected to Bybit - run from quadrick directory with venv activated")
+        print("âŒ Not connected to Bybit - run from quadrick directory with venv activated")
     
-    # Use PORT from environment (Railway/Vercel) or default to 8000
-    # FORCE port to 8001 to match Railway's manually generated domain
-    port = 8001
+    # Railway provides PORT; local fallback uses dashboard bridge port default.
+    port = int(os.getenv("PORT", os.getenv("DASHBOARD_INTERNAL_PORT", "8001")))
     
-    print(f"\n🌐 Starting server on http://0.0.0.0:{port}")
-    print("📊 Dashboard: http://localhost:3000")
+    print(f"\nðŸŒ Starting server on http://0.0.0.0:{port}")
+    print("ðŸ“Š Dashboard: http://localhost:3000")
     print("="*60 + "\n")
     
     uvicorn.run(

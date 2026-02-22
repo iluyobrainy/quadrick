@@ -66,6 +66,13 @@ class CounterTrendValidator:
         self.volume_spike_ratio = volume_spike_ratio
         self.min_rr_ratio = min_rr_ratio
         self.min_score_to_allow = min_score_to_allow
+
+    @staticmethod
+    def _as_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
     
     def validate(
         self,
@@ -96,16 +103,16 @@ class CounterTrendValidator:
         tf_15m = analysis.get("timeframe_analysis", {}).get("15m", {})
         tf_1h = analysis.get("timeframe_analysis", {}).get("1h", {})
         
-        current_price = analysis.get("current_price", 0)
-        adx = tf_15m.get("adx", 25)
-        volume_ratio = tf_15m.get("volume_ratio", 1.0)
-        rsi = tf_15m.get("rsi", 50)
+        current_price = self._as_float(analysis.get("current_price", 0), 0.0)
+        adx = self._as_float(tf_15m.get("adx", 25), 25.0)
+        volume_ratio = self._as_float(tf_15m.get("volume_ratio", 1.0), 1.0)
+        rsi = self._as_float(tf_15m.get("rsi", 50), 50.0)
         trend_1h = tf_1h.get("trend", "neutral")
-        atr = tf_15m.get("atr", current_price * 0.005)
+        atr = self._as_float(tf_15m.get("atr", current_price * 0.005), current_price * 0.005 if current_price > 0 else 0.0)
         
         # Support/resistance levels
-        support = analysis.get("support_level", current_price * 0.95)
-        resistance = analysis.get("resistance_level", current_price * 1.05)
+        support = self._as_float(analysis.get("support_level", current_price * 0.95), current_price * 0.95 if current_price > 0 else 0.0)
+        resistance = self._as_float(analysis.get("resistance_level", current_price * 1.05), current_price * 1.05 if current_price > 0 else 0.0)
         
         # ==========================================
         # REQUIREMENT CHECKS (each adds to score)
@@ -213,8 +220,12 @@ class CounterTrendValidator:
         Returns:
             True if counter-trend, False otherwise
         """
-        if proposed_side == "Buy" and trend_1h == "trending_down":
+        trend = str(trend_1h or "").lower()
+        trending_down = trend in {"trending_down", "downtrend", "bearish", "down"}
+        trending_up = trend in {"trending_up", "uptrend", "bullish", "up"}
+
+        if proposed_side == "Buy" and trending_down:
             return True
-        if proposed_side == "Sell" and trend_1h == "trending_up":
+        if proposed_side == "Sell" and trending_up:
             return True
         return False

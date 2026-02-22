@@ -1,68 +1,66 @@
 """
-Railway startup script - Runs both API server and trading bot
+Railway startup script - runs API server and trading bot together.
 """
-import subprocess
-import sys
 import os
 import signal
+import subprocess
+import sys
 import time
-from pathlib import Path
+
 
 def signal_handler(sig, frame):
-    """Handle shutdown signals"""
-    print("\n🛑 Shutting down...")
+    """Handle shutdown signals."""
+    print("\nShutting down...")
     sys.exit(0)
+
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
+
 if __name__ == "__main__":
-    print("="*60)
+    api_port = os.getenv("PORT") or os.getenv("DASHBOARD_INTERNAL_PORT", "8001")
+
+    print("=" * 60)
     print("QUADRICK TRADING SYSTEM - RAILWAY DEPLOYMENT")
-    print("="*60)
-    print("\n🚀 Starting services...\n")
-    
-    # Run both API server and trading bot
-    print("🌐 Starting API Server on port 8001...")
+    print("=" * 60)
+    print("\nStarting services...\n")
+
+    print(f"Starting API server on port {api_port}...")
     api_process = subprocess.Popen(
         [sys.executable, "-u", "api_server.py"],
-        env={**os.environ, "PYTHONUNBUFFERED": "1"}
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
-    
-    print("🤖 Starting Trading Bot...")
+
+    print("Starting trading bot...")
     bot_process = subprocess.Popen(
         [sys.executable, "-u", "main.py"],
-        env={**os.environ, "PYTHONUNBUFFERED": "1"}
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
-    
+
     def cleanup():
-        print("\n🛑 Shutting down services...")
+        print("\nShutting down services...")
         api_process.terminate()
         bot_process.terminate()
         try:
             api_process.wait(timeout=5)
             bot_process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            print("⚠️ Services didn't stop in time, forcing kill...")
+            print("Services did not stop in time, forcing kill...")
             api_process.kill()
             bot_process.kill()
-        print("✅ Shutdown complete.")
+        print("Shutdown complete.")
 
     try:
-        # Keep the main script alive and monitor subprocesses
         while True:
             if api_process.poll() is not None:
-                print("❌ API Server stopped unexpectedly!")
+                print("API server stopped unexpectedly.")
                 break
             if bot_process.poll() is not None:
-                print("❌ Trading Bot stopped unexpectedly!")
+                print("Trading bot stopped unexpectedly.")
                 break
             time.sleep(2)
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
         cleanup()
-
-
-
-
